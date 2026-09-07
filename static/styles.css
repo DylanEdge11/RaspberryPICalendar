@@ -449,3 +449,44 @@ body.display-page { position: fixed; inset: 0; width: 100%; height: 100%; min-he
 .month-grid { touch-action: pan-y pinch-zoom; }
 .display-app { touch-action: auto; }
 .month-date { position: sticky; top: 0; z-index: 3; background: var(--paper-bright); }
+
+/* Compact, graphic forecast with a sky-coloured current conditions panel. */
+#weatherDialog { width: min(960px, 94vw); max-height: 90vh; max-height: 90dvh; padding: clamp(16px, 2.5vw, 28px); background: #edf3f9; color: #193650; box-shadow: 0 24px 100px #061b3655; }
+#weatherDialog .detail-heading { align-items: center; margin-bottom: 18px; }
+#weatherDialog .detail-heading h2 { font-size: clamp(1rem, 2vw, 1.4rem); }
+#closeWeather { min-height: 44px; flex-shrink: 0; }
+.weather-hero { display: grid; grid-template-columns: 1fr 1fr; align-items: center; overflow: hidden; padding: 24px 28px 0; border-radius: 22px; color: white; background: radial-gradient(ellipse at 85% 10%, #8bc7dd66, transparent 60%), linear-gradient(125deg, #163a66, #347bad); }
+.weather-eyebrow { margin: 0; font-size: 11px; font-weight: 700; letter-spacing: .15em; color: #d3e8fb; }
+.weather-temperature { font-size: clamp(58px, 7vw, 88px); font-weight: 650; letter-spacing: -.07em; line-height: 1.15; }
+.weather-temperature > span { margin-left: 8px; font-size: 24px; font-weight: 400; color: #d3e8fb; letter-spacing: 0; }
+.weather-condition { margin: 2px 0 20px; font-size: 18px; }
+.weather-hero-art { justify-self: center; font-size: clamp(76px, 12vw, 140px); line-height: 1.2; filter: drop-shadow(0 12px 18px #102d4933); }
+.weather-metrics { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 16px 0; border-top: 1px solid #ffffff33; }
+.weather-metrics div { display: grid; gap: 5px; }
+.weather-metrics span { color: #d3e8fb; font-size: 12px; }
+.weather-metrics strong { font-size: 22px; }
+.weather-metrics small { font-size: 12px; font-weight: 400; }
+.weather-forecast h3 { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 22px 0 12px; font-size: 16px; }
+.weather-forecast h3 small { font-size: 11px; font-weight: 400; color: #567089; }
+.forecast-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(105px, 1fr)); gap: 8px; }
+.forecast-card { min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 16px 8px 12px; border: 1px solid #dae5f0; border-radius: 16px; background: #ffffffb3; text-align: center; }
+.forecast-card h4 { margin: 0; font-size: 12px; }
+.forecast-icon { font-size: 38px; line-height: 1.3; }
+.forecast-condition { min-height: 28px; font-size: 11px; color: #567089; }
+.forecast-temp { font-size: 17px; white-space: nowrap; }
+.rain-track { width: 80%; height: 4px; overflow: hidden; border-radius: 10px; background: #dce8f3; margin-top: 3px; }
+.rain-track > span { display: block; height: 100%; border-radius: inherit; background: #3f99d7; }
+.forecast-rain { color: #2873a9; font-size: 12px; }
+.forecast-rain small { font-size: 10px; color: #567089; }
+.weather-updated, .weather-credit { color: #567089; font-size: 11px; line-height: 1.5; }
+.weather-updated { margin: 16px 0 0; }
+.weather-credit { margin-bottom: 0; }
+.weather-credit a { color: #25658d; }
+.album-weather-column .weather-widget { padding: 12px 14px; border: 1px solid #5485aa; background: radial-gradient(ellipse at top right, #629ebe, transparent), #214c75; color: white; text-align: left; }
+.weather-widget-top { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 650; }
+.weather-widget-main { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 34px; line-height: 1.4; }
+.weather-widget-main strong { font-size: 34px; letter-spacing: -.04em; }
+.weather-widget-main small { font-size: 15px; margin-left: 3px; font-weight: 400; }
+.weather-widget-caption { display: block; font-size: 11px; color: #d5e9fb; }
+@media (max-width: 480px) { .forecast-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .weather-hero { padding: 18px 18px 0; } }
+@media (max-height: 600px) and (orientation: landscape) { .weather-widget-main, .weather-widget-main strong { font-size: 25px; } .weather-widget-caption { font-size: 10px; } }
