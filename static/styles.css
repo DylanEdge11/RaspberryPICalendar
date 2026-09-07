@@ -313,7 +313,7 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--teal); outline-
   .calendar-legend { max-width: none; justify-content: flex-start; }
   .calendar-heading h2 { font-size: 1.4rem; }
   .timed-event, .allday-chip, .month-event { font-size: 0.75rem; }
-  .month-cell { overflow-y: auto; }
+
   .month-grid { grid-template-rows: repeat(6, minmax(130px, 1fr)); }
   .legend-item, .day-heading, .month-weekday, .time-label { font-size: 0.7rem; }
 }
@@ -414,9 +414,38 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--teal); outline-
   .month-cell { padding: 4px 3px; }
 }
 @media (pointer: coarse) {
-  .week-time-row { -webkit-overflow-scrolling: touch; }
+
   .timed-event { padding: 3px 4px; font-size: 12px; line-height: 1.25; }
   .timed-event:not(.compact-event) strong { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-  .month-grid { overflow-y: auto; grid-template-rows: repeat(6, minmax(125px, 1fr)); }
-  .month-cell { overflow-y: auto; }
+
+
 }
+
+/* The calendar is a fixed overview; only detail dialogs scroll. */
+body.display-page { position: fixed; inset: 0; width: 100%; height: 100%; min-height: 0; overflow: hidden; overscroll-behavior: none; }
+.display-app { overflow: hidden; touch-action: pinch-zoom; }
+.calendar-mount, .week-view, .month-view { overflow: hidden; }
+.week-time-row { overflow: hidden; }
+.time-axis, .day-canvases, .day-canvas { min-height: 0; }
+.day-canvas { overflow: hidden; }
+.month-grid { overflow: hidden; grid-template-rows: repeat(6, minmax(0, 1fr)); }
+.month-cell { overflow: hidden; }
+.month-more, .allday-more { min-height: 20px; height: 20px; padding: 0 2px; font-size: 11px; line-height: 20px; }
+.month-more[hidden] { display: none; }
+.month-date { width: 30px; height: 26px; min-height: 26px; margin-bottom: 2px; }
+.month-event { min-height: 0; height: 30px; margin: 2px 0; padding: 2px 4px; }
+.month-event .event-title { white-space: nowrap; display: block; line-height: 14px; }
+.month-event .event-time { line-height: 10px; font-size: 9px; }
+.allday-chip { min-height: 0; height: 21px; padding: 3px 4px; }
+.time-label { overflow: hidden; padding-top: 1px; }
+.timed-event.compact-event { padding-top: 2px; padding-bottom: 1px; }
+@media (max-height: 600px) {
+  .day-heading { min-height: 40px; padding-bottom: 3px; }
+  .day-heading .day-number { margin-top: 2px; }
+}
+
+/* Each day can scroll independently without moving the month grid. */
+.month-cell { overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y pinch-zoom; -webkit-overflow-scrolling: touch; }
+.month-grid { touch-action: pan-y pinch-zoom; }
+.display-app { touch-action: auto; }
+.month-date { position: sticky; top: 0; z-index: 3; background: var(--paper-bright); }

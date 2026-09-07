@@ -6,6 +6,23 @@
   document.addEventListener("keydown", event => {
     if (["Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) document.body.classList.remove("pointer-navigation");
   }, true);
+  // Allow scrolling inside days, but stop edge gestures from moving the page.
+  let calendarTouchY = 0;
+  document.querySelector(".display-app").addEventListener("touchstart", event => {
+    calendarTouchY = event.touches[0]?.clientY || 0;
+  }, { passive: true });
+  document.querySelector(".display-app").addEventListener("touchmove", event => {
+    if (event.touches.length !== 1) return;
+    const day = event.target.closest(".month-cell");
+    const delta = event.touches[0].clientY - calendarTouchY;
+    calendarTouchY = event.touches[0].clientY;
+    if (day && day.scrollHeight > day.clientHeight) {
+      const atTop = day.scrollTop <= 0;
+      const atBottom = day.scrollTop + day.clientHeight >= day.scrollHeight - 1;
+      if (!(atTop && delta > 0) && !(atBottom && delta < 0)) return;
+    }
+    event.preventDefault();
+  }, { passive: false });
 
   const dom = {
     displayTitle: document.getElementById("displayTitle"),
@@ -316,19 +333,31 @@
 
   function renderCalendar() {
     if (!app.state?.period) return;
-    const oldScroll = dom.calendarMount.querySelector(".week-time-row")?.scrollTop || 0;
-    dom.calendarMount.innerHTML = app.state.settings.view === "month" ? renderMonth() : renderWeek();
-    const scroller = dom.calendarMount.querySelector(".week-time-row");
-    if (scroller) scroller.scrollTop = oldScroll;
+    const dayScrolls = new Map([...dom.calendarMount.querySelectorAll(".month-cell")].map(cell => [cell.querySelector("[data-day]").dataset.day, cell.scrollTop]));
     renderLegend();
+    dom.calendarMount.innerHTML = app.state.settings.view === "month" ? renderMonth() : renderWeek();
+    if (app.state.settings.view === "week") {
+      const row = dom.calendarMount.querySelector(".week-time-row");
+      weeklyRowHeight = Math.max(1, row.clientHeight / (TIME_END - TIME_START) * 60);
+      dom.calendarMount.querySelector(".week-view").style.setProperty("--row-height", `${weeklyRowHeight}px`);
+      row.querySelectorAll(".day-canvas").forEach(canvas => {
+        canvas.outerHTML = renderDayCanvas(canvas.dataset.date);
+      });
+      row.querySelectorAll(".time-label").forEach((label, index) => {
+        label.style.visibility = weeklyRowHeight < 20 && index % 2 ? "hidden" : "visible";
+      });
+    } else {
+      dom.calendarMount.querySelectorAll(".month-cell").forEach(cell => {
+        cell.scrollTop = dayScrolls.get(cell.querySelector("[data-day]").dataset.day) || 0;
+      });
+    }
   }
 
   function renderWeek() {
     TIME_START = (app.state.settings.weekly_start_hour ?? 6) * 60;
     TIME_END = (app.state.settings.weekly_end_hour ?? 22) * 60;
     const hours = (TIME_END - TIME_START) / 60;
-    const minimumRowHeight = window.matchMedia("(pointer: coarse)").matches ? 56 : 18;
-    weeklyRowHeight = Math.max(minimumRowHeight, Math.min(60, (dom.calendarMount.clientHeight - 125) / hours));
+    weeklyRowHeight = Math.max(1, (dom.calendarMount.clientHeight - 125) / hours);
     const dates = [];
     for (let date = app.state.period.start; date < app.state.period.end; date = addDays(date, 1)) dates.push(date);
     const dayHeadings = dates.map((date) => {
@@ -366,7 +395,7 @@
       const time = event.start_time ? `${formatTime(event.start_time)}${event.end_time ? ` – ${formatTime(event.end_time)}` : ""}` : "";
       return `<button ${eventButton(event)} class="timed-event ${height < 34 ? 'compact-event' : ''}" style="--event-color:${color};--event-tint:${eventTint(color)};top:${top}px;height:${height}px;left:calc(${left}% + 2px);width:calc(${width}% - 5px)" title="${escapeHtml(`${event.title}${time ? ` · ${time}` : ""}`)}"><strong>${escapeHtml(event.title)}</strong><span>${escapeHtml(time)}</span></button>`;
     }).join("");
-    return `<div class="day-canvas ${date === app.state.today ? "today" : ""}">${html}</div>`;
+    return `<div data-date="${date}" class="day-canvas ${date === app.state.today ? "today" : ""}">${html}</div>`;
   }
 
   function positionEvents(events, date) {
@@ -401,12 +430,12 @@
     const weekdays = dates.slice(0, 7).map((date) => `<div class="month-weekday">${escapeHtml(formatDate(date, { weekday: "short" }))}</div>`).join("");
     const cells = dates.map((date) => {
       const events = app.events.filter((event) => eventOverlapsDate(event, date)).sort((a, b) => Number(b.all_day) - Number(a.all_day) || (a.start_time || "").localeCompare(b.start_time || ""));
-      const visible = events.slice(0, 4).map((event) => {
+      const visible = events.map((event) => {
         const color = safeColor(event.calendar_color);
         const time = event.all_day ? "All day" : formatTime(event.start_time);
         return `<button ${eventButton(event)} class="month-event" style="--event-color:${color};--event-tint:${eventTint(color)}" title="${escapeHtml(event.title)}"><span class="event-dot"></span><span class="event-time">${escapeHtml(time)}</span><span class="event-title">${escapeHtml(event.title)}</span></button>`;
       }).join("");
-      const more = events.length > 4 ? `<button type="button" data-day="${date}" class="month-more">+${events.length - 4} more</button>` : "";
+      const more = "";
       const outside = date.slice(0, 7) !== monthKey;
       return `<div class="month-cell ${outside ? "outside" : ""} ${date === app.state.today ? "today" : ""}"><button type="button" data-day="${date}" aria-label="Show all events for ${date}" class="month-date">${formatDate(date, { day: "numeric" })}</button>${visible}${more}</div>`;
     }).join("");
