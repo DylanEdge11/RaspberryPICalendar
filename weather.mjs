@@ -36,7 +36,7 @@ export function createWeatherService({ fetchImpl = fetch, now = Date.now } = {})
     const work = (async () => {
       try {
         const location = await resolve(city);
-        const params = new URLSearchParams({ latitude: location.latitude, longitude: location.longitude, timezone: 'auto', forecast_days: '7', current: 'temperature_2m,apparent_temperature,weather_code,wind_speed_10m,rain,showers,snowfall', hourly: 'temperature_2m,weather_code,precipitation_probability', daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max' });
+        const params = new URLSearchParams({ latitude: location.latitude, longitude: location.longitude, timezone: 'auto', forecast_days: '7', current: 'temperature_2m,apparent_temperature,weather_code,wind_speed_10m,rain,showers,snowfall', hourly: 'temperature_2m,weather_code,precipitation_probability', daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,rain_sum,showers_sum,snowfall_sum,wind_speed_10m_max,wind_gusts_10m_max' });
         const data = await json(`https://api.open-meteo.com/v1/forecast?${params}`);
         if (!data.current?.time || !data.hourly?.time?.length || !data.daily?.time?.length) throw new Error('Weather provider returned incomplete data.');
         const value = { location, timezone: data.timezone, current: { ...data.current, display_weather_code: currentConditionCode(data.current) }, hourly: data.hourly, daily: data.daily, updated_at: new Date(now()).toISOString(), stale: false };

@@ -107,11 +107,27 @@
     const theme = ({ Clear: 'sunny', 'Partly cloudy': 'partly', Overcast: 'cloudy', Fog: 'fog', Rain: 'rain', Snow: 'snow', Thunderstorms: 'storm' })[label] || 'cloudy';
     weatherButton.dataset.weather = theme;
     weatherDialog.dataset.weather = theme;
-    const todayHigh = degrees(data.daily.temperature_2m_max?.[0]);
-    const todayLow = degrees(data.daily.temperature_2m_min?.[0]);
-    weatherButton.innerHTML = '<span class="weather-scene" aria-hidden="true"><i class="scene-sun"></i><i class="scene-cloud cloud-one"></i><i class="scene-cloud cloud-two"></i><i class="scene-precip"></i></span><span class="weather-bar-content"><span class="weather-bar-current"><span class="weather-bar-temperature">' + degrees(data.current.temperature_2m) + '<small>C</small></span><span class="weather-bar-location"><strong>' + escapeHtml(city) + '</strong><span>' + label + '</span></span></span><span class="weather-bar-details"><span>Feels like <b>' + degrees(data.current.apparent_temperature) + '</b></span><span>High <b>' + todayHigh + '</b> · Low <b>' + todayLow + '</b></span></span><span class="weather-bar-link">' + (stale ? 'Last saved · ' : '') + 'Forecast <span aria-hidden="true">↗</span></span></span>';
-    weatherButton.setAttribute("aria-label", city + ": " + degrees(data.current.temperature_2m) + " Celsius, " + label + ". Open " + (weekly ? "7-day forecast" : "today's hourly forecast"));
     const today = new Intl.DateTimeFormat("en-CA", { timeZone: data.timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+    const dayIndex = data.daily.time.indexOf(today);
+    const dailyValue = key => data.daily[key]?.[dayIndex];
+    const todayHigh = degrees(dailyValue('temperature_2m_max'));
+    const todayLow = degrees(dailyValue('temperature_2m_min'));
+    const amount = (value, unit) => Number.isFinite(value) ? (value > 0 && value < 0.1 ? '<0.1' : String(Math.round(value * 10) / 10)) + ' ' + unit : '—';
+    const precipitation = dailyValue('precipitation_sum');
+    const snow = dailyValue('snowfall_sum');
+    const chance = dailyValue('precipitation_probability_max');
+    const peakWind = dailyValue('wind_speed_10m_max');
+    const gusts = dailyValue('wind_gusts_10m_max');
+    // Plain-language display categories, not official weather warnings.
+    const windLabel = !Number.isFinite(peakWind) ? 'Wind' : peakWind >= 30 ? 'Windy' : peakWind >= 15 ? 'Breezy' : 'Light wind';
+    const precipText = amount(precipitation, 'mm') + (Number.isFinite(chance) ? ' · ' + Math.round(chance) + '%' : ' · Chance —');
+    const precipNote = Number.isFinite(snow) && snow > 0 ? 'Incl. snow ' + amount(snow, 'cm') : 'Total rain, snow & ice¹';
+    const windText = windLabel + ' · ' + (Number.isFinite(peakWind) ? Math.round(peakWind) + ' km/h' : '—');
+    const gustText = 'Max gusts ' + (Number.isFinite(gusts) ? Math.round(gusts) + ' km/h' : '—');
+    const dailySections = '<span class="weather-day-summary"><span class="weather-day-stat" title="Full-day precipitation forecast. Total includes snow and ice as liquid-water equivalent; chance is the day’s maximum precipitation probability."><span class="weather-stat-label">☂ Precipitation today</span><strong>' + escapeHtml(precipText) + '</strong><span>' + escapeHtml(precipNote) + '</span></span><span class="weather-day-stat" title="Today’s maximum sustained wind and gusts. Light wind: below 15 km/h; breezy: 15–29 km/h; windy: 30 km/h or higher. These are display categories, not weather warnings."><span class="weather-stat-label">≋ Wind today</span><strong>' + escapeHtml(windText) + '</strong><span>' + escapeHtml(gustText) + '</span></span></span>';
+
+    weatherButton.innerHTML = '<span class="weather-scene" aria-hidden="true"><i class="scene-sun"></i><i class="scene-cloud cloud-one"></i><i class="scene-cloud cloud-two"></i><i class="scene-precip"></i></span><span class="weather-bar-content"><span class="weather-bar-current"><span class="weather-bar-temperature">' + degrees(data.current.temperature_2m) + '<small>C</small></span><span class="weather-bar-location"><strong>' + escapeHtml(city) + '</strong><span>' + label + '</span></span></span><span class="weather-bar-details"><span>Feels like <b>' + degrees(data.current.apparent_temperature) + '</b></span><span>High <b>' + todayHigh + '</b> · Low <b>' + todayLow + '</b></span></span><span class="weather-bar-link">' + (stale ? 'Last saved · ' : '') + 'Forecast <span aria-hidden="true">↗</span></span></span>' + dailySections + '<span class="weather-total-note">¹ Daily total in water equivalent · forecast</span>';
+    weatherButton.setAttribute("aria-label", city + ": " + degrees(data.current.temperature_2m) + " Celsius, " + label + ". Today: precipitation " + precipText + ". " + windText + ". " + gustText + ". Open " + (weekly ? "7-day forecast" : "today's hourly forecast"));
     const source = weekly ? data.daily : data.hourly;
     const rows = source.time.map((time, i) => {
       if (!weekly && time.slice(0, 10) !== today) return "";
