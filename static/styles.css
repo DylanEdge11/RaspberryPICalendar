@@ -493,7 +493,7 @@ body.display-page { position: fixed; inset: 0; width: 100%; height: 100%; min-he
 
 /* A compact weather bar: the illustrated sky follows the forecast. */
 .album-actions { justify-content: flex-end; }
-.album-weather-column { container-type: inline-size; }
+
 .album-weather-column .weather-widget { position: relative; isolation: isolate; overflow: hidden; min-height: 92px; padding: 14px 18px; border-color: #ffffff55; background: linear-gradient(110deg, #475e70, #91a7b3); text-shadow: 0 1px 3px #17304444; }
 .weather-scene { position: absolute; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
 .weather-scene::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, #102b4440, transparent); }
@@ -521,8 +521,6 @@ body.display-page { position: fixed; inset: 0; width: 100%; height: 100%; min-he
 .weather-bar-location strong { font-size: 14px; }
 .weather-bar-location > span, .weather-bar-details { font-size: 12px; }
 .weather-bar-link { font-size: 11px; white-space: nowrap; }
-@container (max-width: 360px) { .weather-bar-content { flex-wrap: wrap; gap: 10px; } .weather-bar-current { width: 100%; } .weather-bar-details { font-size: 11px; gap: 3px; } .weather-bar-temperature { font-size: 36px; } }
-@container (max-width: 190px) { .weather-bar-current { gap: 8px; flex-wrap: wrap; } .weather-bar-details { display: none; } .weather-bar-location strong { font-size: 12px; } }
 /* All 24 hourly readings fit in the dialog; only the weekly view uses tall cards. */
 #weatherDialog.hourly-weather { width: min(1100px, 96vw); height: min(780px, 96dvh); max-height: 96dvh; padding: 16px 20px; overflow: hidden; }
 .hourly-weather[open] { display: flex; flex-direction: column; }
@@ -555,11 +553,18 @@ body.display-page { position: fixed; inset: 0; width: 100%; height: 100%; min-he
 #weatherDialog[data-weather="snow"] .weather-hero { background: linear-gradient(110deg, #526e87, #9bb4c5); }
 #weatherDialog[data-weather="sunny"] .weather-hero { background: radial-gradient(circle at 70% 0, #ffe5a244, transparent 55%), linear-gradient(110deg, #346d96, #77b8ca); }
 
-/* Full-day precipitation and wind remain visible below current conditions. */
-.weather-day-summary { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; margin-top: 12px; padding-top: 11px; border-top: 1px solid #ffffff40; text-align: left; }
-.weather-day-stat { display: grid; align-content: start; gap: 4px; min-width: 0; }
-.weather-stat-label { color: #eff7ff; font-size: 11px; font-weight: 550; }
-.weather-day-stat strong { font-size: 14px; line-height: 1.3; }
-.weather-day-stat > span:last-child { font-size: 11px; color: #f0f6fa; }
-.weather-total-note { display: block; margin-top: 7px; text-align: left; font-size: 9px; color: #e0ebf2; }
-@container (max-width: 280px) { .weather-day-summary { grid-template-columns: 1fr; gap: 9px; } .weather-day-stat strong { font-size: 12px; } .weather-day-stat { gap: 2px; } .weather-stat-label, .weather-day-stat > span:last-child { font-size: 10px; } }
+
+/* Explicit tracks prevent Safari intrinsic button sizing from stretching the column. */
+.album-weather-column .weather-widget { display: block; box-sizing: border-box; width: 100%; min-width: 0; height: 84px; min-height: 84px; max-height: 84px; padding: 10px; align-self: end; overflow: hidden; overflow-wrap: normal; word-break: normal; white-space: normal; }
+.weather-compact { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; height: 100%; text-align: left; }
+.weather-compact-left, .weather-compact-place, .weather-compact-precip { display: flex; flex-direction: column; min-width: 0; gap: 3px; line-height: 1.2; }
+.weather-compact-temp { font-size: 30px; font-weight: 650; white-space: nowrap; letter-spacing: -.04em; }
+.weather-compact-temp small { font-size: 11px; margin-left: 2px; font-weight: 400; }
+.weather-compact-feels { font-size: 10px; white-space: nowrap; }
+.weather-compact-place strong { font-size: 12px; }
+.weather-compact-place > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.weather-compact-place > span { font-size: 10px; }
+.weather-compact-precip { font-size: 10px; white-space: nowrap; text-align: right; }
+.weather-compact-precip strong { font-size: 12px; }
+@media (max-width: 1280px) and (orientation: landscape) { .album-weather-column .weather-widget { padding: 8px 6px; } .weather-compact { gap: 4px; } .weather-compact-temp { font-size: 24px; } .weather-compact-place strong { font-size: 10px; } .weather-compact-precip { font-size: 9px; } .weather-compact-precip strong { font-size: 10px; } }
+@media (orientation: portrait) { .album-weather-column { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 84px; gap: 8px; } }
