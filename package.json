@@ -1,0 +1,18 @@
+{
+  "name": "raspberry-pi-family-calendar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A Pi-friendly household calendar and family photo display.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test",
+    "check": "node --check server.mjs && node --check static/display.js && node --check static/control.js"
+  },
+  "dependencies": {
+    "sharp": "^0.33.5"
+  }
+}

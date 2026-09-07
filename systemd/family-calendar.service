@@ -1,0 +1,23 @@
+[Unit]
+Description=Raspberry Pi family calendar web service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=family-calendar
+Group=family-calendar
+WorkingDirectory=/opt/family-calendar
+EnvironmentFile=/etc/family-calendar/calendar.env
+ExecStart=/usr/bin/node /opt/family-calendar/server.mjs
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/family-calendar
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

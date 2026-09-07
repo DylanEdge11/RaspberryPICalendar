@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">Sample family kitchen</title><desc id="desc">A cozy illustrated kitchen table with a vase of flowers.</desc>
+  <defs><linearGradient id="wall" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#fff4dc"/><stop offset="1" stop-color="#f1d7b6"/></linearGradient><linearGradient id="table" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#b87552"/><stop offset="1" stop-color="#82503f"/></linearGradient></defs>
+  <rect width="1600" height="900" fill="url(#wall)"/><path d="M104 151h1392v394H104Z" fill="#eff6e8" stroke="#bfd4bf" stroke-width="18"/><path d="M170 200h300v258H170ZM505 200h300v258H505ZM840 200h300v258H840ZM1175 200h255v258h-255Z" fill="#c9e2dc" opacity=".67"/>
+  <g fill="#ef9a78"><circle cx="301" cy="329" r="42"/><circle cx="694" cy="303" r="33"/><circle cx="1015" cy="343" r="43"/><circle cx="1316" cy="294" r="35"/></g>
+  <path d="M0 557h1600v343H0Z" fill="url(#table)"/><ellipse cx="802" cy="640" rx="426" ry="105" fill="#f9e9c9"/><ellipse cx="802" cy="640" rx="340" ry="76" fill="#fff8e8"/>
+  <path d="M735 647h132v115H735Z" fill="#6e9e83"/><path d="M798 644V490" stroke="#4b806a" stroke-width="17"/><g fill="#e97469"><circle cx="750" cy="492" r="34"/><circle cx="805" cy="468" r="38"/><circle cx="858" cy="500" r="31"/></g>
+  <g fill="#efb04b"><path d="M570 618q48-85 95 0v37H570Z"/><path d="M946 614q49-82 97 0v38H946Z"/><circle cx="617" cy="611" r="23"/><circle cx="994" cy="608" r="24"/></g>
+  <g fill="#f4c6a1"><circle cx="383" cy="596" r="44"/><path d="M332 653q53-63 106 0l24 145H310Z"/><circle cx="1223" cy="603" r="48"/><path d="M1171 665q56-69 110 0l28 135h-167Z"/></g>
+  <path d="M0 842h1600v58H0Z" fill="#5c3c37" opacity=".5"/>
+</svg>

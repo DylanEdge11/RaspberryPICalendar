@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">Sample family sunset</title><desc id="desc">A warm illustrated family moment by a lake at sunset.</desc>
+  <defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#f49b75"/><stop offset=".55" stop-color="#f8cf8a"/><stop offset="1" stop-color="#96c7bd"/></linearGradient><linearGradient id="water" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#3a6974"/><stop offset="1" stop-color="#173d55"/></linearGradient></defs>
+  <rect width="1600" height="900" fill="url(#sky)"/><circle cx="1180" cy="305" r="104" fill="#fff0bd" opacity=".82"/>
+  <path d="M0 540 250 345l170 118 230-250 290 286 210-170 450 285v286H0Z" fill="#365a61" opacity=".72"/>
+  <path d="M0 640c220-46 380 7 585-24 217-33 405-15 604 18 166 27 271-20 411-8v274H0Z" fill="url(#water)"/>
+  <path d="M0 724c235-26 354 29 563-2 252-38 430 7 654 8 175 1 237-25 383-12" fill="none" stroke="#8ec6bd" stroke-width="9" opacity=".52"/>
+  <path d="M0 796c196-42 356 25 559-7 207-33 409 2 610 7 189 5 273-34 431-8v112H0Z" fill="#122f3b"/>
+  <g fill="#122f3b"><circle cx="730" cy="610" r="38"/><path d="M686 662q44-52 88 0l27 140H659Z"/><circle cx="850" cy="645" r="30"/><path d="M817 686q33-47 66 0l25 116h-108Z"/><circle cx="968" cy="617" r="39"/><path d="M922 669q46-55 92 0l29 133H894Z"/></g>
+  <g fill="#f4c97f" opacity=".8"><path d="M657 807h400v12H657Z"/><path d="M720 827h280v8H720Z"/></g>
+</svg>

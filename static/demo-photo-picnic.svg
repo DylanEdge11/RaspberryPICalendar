@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">Sample lake picnic</title><desc id="desc">A bright illustrated picnic by a quiet lake.</desc>
+  <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#bfded4"/><stop offset="1" stop-color="#f4dba3"/></linearGradient><linearGradient id="hill" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#5e9c8f"/><stop offset="1" stop-color="#32616b"/></linearGradient></defs>
+  <rect width="1600" height="900" fill="url(#bg)"/><circle cx="265" cy="198" r="72" fill="#fff5cc" opacity=".8"/>
+  <path d="M0 457Q240 275 470 417t438-25q266-170 692 65v241H0Z" fill="url(#hill)"/><path d="M0 545q270-69 518-2t457-19q321-91 625 18v204H0Z" fill="#7db3a6"/>
+  <path d="M0 692q237-60 517-4t486-14q289-68 597 19v207H0Z" fill="#f6e1ad"/>
+  <path d="M570 667h470v88H570Z" fill="#d96c56" transform="rotate(-4 805 710)"/><path d="m536 666 537-2-22 31-506 7Z" fill="#f8bd77" transform="rotate(-4 805 710)"/>
+  <g fill="#f3b36f"><circle cx="658" cy="575" r="37"/><path d="M615 626q44-50 88 0l23 119H591Z"/><circle cx="903" cy="559" r="43"/><path d="M853 617q50-59 100 0l33 130H819Z"/></g>
+  <g fill="#2b5360"><path d="M625 655h72v90h-72Z"/><path d="M875 646h75v102h-75Z"/><circle cx="1170" cy="688" r="41"/><path d="M1122 736q49-58 98 0l23 114h-145Z"/></g>
+  <g fill="none" stroke="#fff4c3" stroke-width="8" opacity=".72"><path d="M110 768q184-35 331 0"/><path d="M116 798q128-24 248 0"/><path d="M1180 800q105-24 274 5"/></g>
+</svg>

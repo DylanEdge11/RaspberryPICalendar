@@ -1,0 +1,16 @@
+[Unit]
+Description=Chromium kiosk for the family calendar
+After=graphical.target family-calendar.service
+Wants=family-calendar.service
+
+[Service]
+Type=simple
+User=pi
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/pi/.Xauthority
+ExecStart=/usr/bin/chromium --kiosk --noerrdialogs --disable-session-crashed-bubble --disable-infobars --check-for-update-interval=31536000 http://127.0.0.1:8080/
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target

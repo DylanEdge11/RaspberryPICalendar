@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f5f2ec">
+    <title>Family calendar controls</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body class="control-page">
+    <main class="control-app">
+      <header class="control-topbar">
+        <a class="back-link" href="/" aria-label="Back to display">← <span>Display</span></a>
+        <div class="control-brand"><div class="brand-mark small" aria-hidden="true"><span></span><span></span><span></span></div><span>Family controls</span></div>
+        <button class="text-button hidden" id="logoutButton" type="button">Sign out</button>
+      </header>
+
+      <section class="login-layout" id="loginView">
+        <div class="login-intro">
+          <p class="section-kicker">PRIVATE HOME DISPLAY</p>
+          <h1>Make the week feel lighter.</h1>
+          <p class="large-muted">Pair this phone with the calendar screen to switch views, add family photos, and tune the quiet hours.</p>
+        </div>
+        <form class="surface-card login-card" id="loginForm">
+          <div class="login-card-icon">⌁</div>
+          <p class="section-kicker">PHONE PAIRING</p>
+          <h2>Enter the pairing PIN</h2>
+          <p class="muted-copy" id="loginHint">This keeps uploads and household settings private on your Wi-Fi.</p>
+          <label class="field-label" for="pinInput">Pairing PIN</label>
+          <input class="text-input pin-input" id="pinInput" name="pin" type="password" inputmode="numeric" autocomplete="one-time-code" maxlength="64" required>
+          <button class="primary-button full-width" type="submit">Open controls <span>→</span></button>
+          <p class="form-error" id="loginError" role="alert"></p>
+          <p class="demo-hint hidden" id="demoHint">Demo mode PIN: <code>1234</code></p>
+        </form>
+      </section>
+
+      <section class="controls-view hidden" id="controlsView">
+        <div class="control-heading">
+          <div>
+            <p class="section-kicker" id="controlModeLabel">DISPLAY CONTROLS</p>
+            <h1>Set the room’s rhythm.</h1>
+            <p class="large-muted">Changes are saved on the Pi and appear on the display automatically.</p>
+          </div>
+          <div class="control-status-card" id="controlStatusCard"><span class="status-dot"></span><span id="controlStatusText">Connected</span></div>
+        </div>
+
+        <div class="control-grid">
+          <section class="surface-card control-card view-card">
+            <div class="card-heading-row"><div><p class="section-kicker">CURRENT VIEW</p><h2>What should be on screen?</h2></div><span class="card-number">01</span></div>
+            <div class="segmented-control" role="group" aria-label="Calendar view">
+              <button type="button" data-view="week" class="segment-button">Week <span>7 days</span></button>
+              <button type="button" data-view="month" class="segment-button">Month <span>At a glance</span></button>
+            </div>
+            <div class="period-controls">
+              <button class="secondary-button" id="previousButton" type="button">← <span>Previous</span></button>
+              <button class="secondary-button today-button" id="todayButton" type="button">Today</button>
+              <button class="secondary-button" id="nextButton" type="button"><span>Next</span> →</button>
+            </div>
+            <p class="current-period" id="controlPeriod">Loading…</p>
+          </section>
+
+          <section class="surface-card control-card settings-card">
+            <div class="card-heading-row"><div><p class="section-kicker">DISPLAY SETTINGS</p><h2>Make it yours.</h2></div><span class="card-number">02</span></div>
+            <form id="settingsForm">
+              <label class="setting-row"><span><strong>Week starts on</strong><small>Used by week and month views</small></span><select class="select-input" id="weekStart"><option value="monday">Monday</option><option value="sunday">Sunday</option></select></label>
+              <label class="setting-row"><span><strong>Photo timing</strong><small>Seconds per family photo</small></span><span class="inline-control"><input class="number-input" id="slideshowSeconds" type="number" min="5" max="60" step="1"><span>sec</span></span></label>
+              <label class="setting-row"><span><strong>Display title</strong><small>Short phrase at the top of the screen</small></span><input class="text-input compact-input" id="displayTitleInput" type="text" maxlength="80"></label>
+              <div class="setting-row overnight-row"><span><strong>Quiet hours</strong><small>Dims the page; it does not power off the monitor</small></span><label class="toggle"><input id="overnightEnabled" type="checkbox"><span class="toggle-track"></span></label></div>
+              <div class="quiet-time-grid"><label class="field-label">Dim at<input class="text-input" id="overnightStart" type="time"></label><label class="field-label">Brighten at<input class="text-input" id="overnightEnd" type="time"></label></div>
+              <button class="primary-button" type="submit">Save settings <span>→</span></button>
+              <p class="save-message" id="settingsMessage" role="status"></p>
+            </form>
+          </section>
+
+          <section class="surface-card control-card photo-control-card">
+            <div class="card-heading-row"><div><p class="section-kicker">FAMILY PHOTOS</p><h2>Send a little joy.</h2></div><span class="card-number">03</span></div>
+            <p class="muted-copy">Choose photos from this phone. They are resized for the display and kept on the Pi.</p>
+            <form id="uploadForm" class="upload-form">
+              <label class="upload-dropzone" for="photoInput"><span class="upload-icon">＋</span><strong>Choose photos</strong><small>JPEG, PNG, GIF, WebP, AVIF, HEIC · up to 20 MB each</small></label>
+              <input id="photoInput" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/avif,image/heic,image/heif" multiple>
+              <button class="secondary-button full-width" type="submit">Upload selected photos</button>
+              <p class="save-message" id="uploadMessage" role="status"></p>
+            </form>
+            <div class="photo-list" id="photoList"></div>
+          </section>
+
+          <section class="surface-card control-card google-card">
+            <div class="card-heading-row"><div><p class="section-kicker">CALENDARS</p><h2>Bring in your real week.</h2></div><span class="card-number">04</span></div>
+            <p class="muted-copy">Read-only Google Calendar access. Connect each household account separately, then choose which calendars appear.</p>
+            <div id="googleAccountList" class="google-account-list"><p class="muted-copy">Loading calendar connections…</p></div>
+            <div class="google-actions"><a class="secondary-button" id="googleConnectButton" href="/api/google/start">Connect Google Calendar</a><button class="text-button" id="googleSyncButton" type="button">Sync now</button></div>
+            <p class="form-note">Google credentials stay in the Pi’s private data directory. Demo mode never contacts Google.</p>
+          </section>
+        </div>
+      </section>
+    </main>
+    <script src="/static/control.js?v=0.1.2" defer></script>
+  </body>
+</html>

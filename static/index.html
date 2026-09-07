@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#101820">
+    <title>Our family week</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body class="display-page">
+    <main class="display-app" aria-live="polite">
+      <header class="display-topbar">
+        <div class="brand-lockup">
+          <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div>
+            <p class="brand-eyebrow" id="modeLabel">Family calendar</p>
+            <h1 id="displayTitle">Our family week</h1>
+          </div>
+        </div>
+        <div class="topbar-status">
+          <span class="status-pill" id="syncStatus"><span class="status-dot"></span>Loading calendar</span>
+          <span class="clock" id="clock" aria-label="Current time"></span>
+          <a class="icon-link" href="/control" aria-label="Open phone controls" title="Phone controls">⌁</a>
+        </div>
+      </header>
+
+      <section class="display-layout">
+        <section class="calendar-card surface-card">
+          <div class="calendar-heading">
+            <div>
+              <p class="section-kicker" id="viewKicker">THIS WEEK</p>
+              <h2 id="periodTitle">Getting the week ready…</h2>
+              <p class="muted-copy" id="periodSubtitle">Use the phone controls to change the view.</p>
+            </div>
+            <div class="calendar-legend" id="calendarLegend" aria-label="Calendar legend"></div>
+          </div>
+          <div class="calendar-mount" id="calendarMount">
+            <div class="loading-state"><span class="loading-orb"></span>Loading the family calendar…</div>
+          </div>
+        </section>
+
+        <aside class="photo-card surface-card" aria-label="Family photos">
+          <div class="photo-header">
+            <div>
+              <p class="section-kicker">FAMILY ALBUM</p>
+              <h2 id="photoHeading">A little moment</h2>
+            </div>
+            <span class="photo-count" id="photoCount">—</span>
+          </div>
+          <div class="photo-frame" id="photoFrame">
+            <div class="photo-sheen"></div>
+            <img id="photoImage" alt="Family photo" decoding="async">
+            <div class="photo-empty" id="photoEmpty">Upload a few family photos from the phone controls.</div>
+            <div class="photo-caption">
+              <span id="photoCaption">Sample image</span>
+              <span class="caption-rule"></span>
+              <span id="photoIndex">01</span>
+            </div>
+          </div>
+          <p class="photo-note" id="photoNote">Photos stay on this Pi and keep cycling if the internet goes away.</p>
+        </aside>
+      </section>
+
+      <footer class="display-footer">
+        <span id="footerMessage">Private home display · America/Regina</span>
+        <span class="footer-key"><span class="live-dot"></span><span id="connectionMessage">Connected</span></span>
+      </footer>
+    </main>
+
+    <script src="/static/display.js?v=0.1.2" defer></script>
+  </body>
+</html>
