@@ -475,7 +475,10 @@ function clearLoginFailures(req) {
 }
 
 function setSessionCookie(res, token, maxAge = Math.floor(SESSION_TTL_MS / 1000)) {
-  res.setHeader("Set-Cookie", `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}`);
+  // OAuth returns to this browser through a top-level GET from Google. Lax
+  // keeps the session cookie for that callback while still withholding it
+  // from cross-site POST requests.
+  res.setHeader("Set-Cookie", `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`);
 }
 
 function broadcastState() {
