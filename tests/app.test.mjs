@@ -77,6 +77,7 @@ after(async () => {
 });
 
 test("management state is protected and phone view changes are persisted", async () => {
+  for (const method of ['GET', 'POST']) assert.equal((await fetch(`${baseUrl}/api/system/update`, { method })).status, 401);
   for (const [method, route] of [["GET", "status"], ["GET", "connect"], ["POST", "start"], ["POST", "check"], ["POST", "import"], ["POST", "cancel"], ["DELETE", "connection"]]) {
     assert.equal((await fetch(`${baseUrl}/api/google-photos/${route}`, { method, redirect: "manual" })).status, 401);
   }
@@ -89,6 +90,7 @@ test("management state is protected and phone view changes are persisted", async
   assert.equal(login.status, 200);
   assert.match(login.headers.get("set-cookie"), /SameSite=Lax/);
   cookie = login.headers.get("set-cookie").split(";", 1)[0];
+  assert.equal((await fetch(`${baseUrl}/api/system/update`, { method: 'POST', headers: { Cookie: cookie } })).status, 409);
   assert.equal((await fetch(`${baseUrl}/api/google-photos/start`, { method: "POST", headers: { Cookie: cookie } })).status, 409, "demo never calls Google");
 
   const changed = await fetch(`${baseUrl}/api/state`, { method: "POST", headers: { "Content-Type": "application/json", Cookie: cookie }, body: JSON.stringify({ view: "month" }) });

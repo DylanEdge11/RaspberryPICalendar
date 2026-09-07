@@ -177,6 +177,40 @@ curl http://127.0.0.1:8080/api/health
 
 `APP_DATA_DIR` is outside the checkout, so normal code updates do not remove photos, settings, event cache, or Google tokens. Never run a checkout/reset command against the data directory.
 
+### Phone-controlled updates (one-time Pi setup)
+
+Public GitHub does not automatically update the Pi. After enabling this feature, use **Application → Update application** on the paired phone controls to install a published release.
+
+On the Pi, run each line separately and stop if any command fails:
+
+```sh
+cd /opt/family-calendar
+sudo bash scripts/backup.sh
+sudo git pull --ff-only origin main
+sudo bash scripts/install-phone-updates.sh
+sudo systemctl restart family-calendar.service
+```
+
+Refresh the phone controls. Future updates require tapping **Update application** and confirming. Keep the Pi powered on; backups and installation can take several minutes. The display reloads after a backend restart; phone controls may require pairing again. If there is no newer release, the app stays running.
+
+Requirements: the documented root-owned checkout, `/var/lib/family-calendar` data directory, port 8080, production service, Python 3.11+, and `/usr/bin` Node/npm/Git. This targets the owner's confirmed ARM64 Trixie installation. The checkout must be clean and its origin must be `https://github.com/DylanEdge11/RaspberryPICalendar.git`. Updates follow `main`, reject divergent history, and leave a detached release commit. On the computer, test, commit, and push before an update exists for the Pi.
+
+The paired endpoint writes only a fixed request marker. A root-owned systemd path/service runs a fixed helper outside the checkout; the web service receives no general sudo permission. npm lifecycle scripts are disabled; syntax and sharp smoke checks run as the application user. Automatic updates require prebuilt ARM dependencies; source-build-only installations need manual maintenance. Re-run the installer when a release changes the helper or its systemd units; the phone deliberately does not replace its own privileged helper.
+
+Before replacing code, the updater stops the app and saves SQLite, photos, tokens, configuration, the previous commit and checksums to a protected directory under `/var/backups/family-calendar`. These backups contain secrets. They are not uploaded or automatically pruned; monitor disk space and retain a known-good backup. Ordinary code updates preserve household data; this release makes no schema change.
+
+If installation or health checks fail, the helper attempts to reinstall the previous commit only when the database schema version is unchanged. If the version changed, it leaves the app stopped for manual recovery using the backup. Power loss or the 15-minute service timeout can interrupt recovery; automatic rollback is not guaranteed. For stuck progress, inspect on the Pi:
+
+```sh
+sudo systemctl status family-calendar-update.path family-calendar-update.service
+sudo journalctl -u family-calendar-update.service -n 60 --no-pager
+sudo cat /var/lib/family-calendar-updater/status.json
+```
+
+Preserve the recorded backup and follow rollback/restore below before restarting. Once recovery is complete, an administrator can run `sudo systemctl start family-calendar-update.service` to retry and replace stale progress. A failed app cannot show phone controls, so terminal access remains necessary for exceptional recovery.
+
+Developer verification also includes `python3 -m unittest discover -s tests -p test_phone_update.py` and `bash -n scripts/install-phone-updates.sh`. The updater's success/failure paths are mocked; actual systemd execution, ARM dependency permissions, backups and rollback must be verified on the Pi.
+
 ### Rollback and migrations
 
 Keep the previous good commit hash and the backup directory. If the new code fails:

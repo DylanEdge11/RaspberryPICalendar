@@ -13,6 +13,8 @@ Updated: 2026-09-06
 
 ## Completed
 
+- Phone application updates: authenticated request/status API, mobile confirmation/progress, root-owned fixed-purpose systemd updater, clean-origin/ancestry checks, stopped-service private backup including configuration, dependency/syntax/health checks, and schema-aware rollback attempt. Display reloads on backend instance changes. One-time Pi installer required; helper upgrades remain manual. No schema migration.
+- Current verification: 16 Node tests and 6 mocked Python updater tests pass. Mobile update request/progress/completion inspected in headless Edge at 390×844 with no page errors or horizontal overflow. Actual Pi update/backup/recovery and reboot are not tested here. See README phone-update setup and recovery instructions.
 - Photo filename/counter overlays are hidden by default for real photos. Phone setting **Show photo labels** persists in SQLite and updates the display live. Demo image labels remain visible. Owner reports Google Photos Picker is now working on the Pi.
 
 - Google Photos Picker manual import: separate Photos OAuth using existing callback/client, phone selection/search, explicit import, progress, expiry/cancel/disconnect, pagination and persistent-ID duplicate skips. One connection and import at a time; 100-item batch, sequential bounded downloads through shared image pipeline. Local saved photos; no automatic album subscription. No database migration.
@@ -49,15 +51,12 @@ The valid-image upload path was exercised with a PNG after installing the locked
 
 ## Next exact steps
 
-1. Run `npm run check` and `npm test` on a machine with Node/npm.
-2. Start demo mode, inspect the display at an actual 1920×1080 kiosk viewport and the control page at iPhone/Android-sized widths, and record any layout fixes.
-3. Create a private GitHub repository and add its remote; push a reviewed first commit.
-4. On the Pi, record `uname -m`, `getconf LONG_BIT`, `/etc/os-release`, Node version, Chromium path, and available memory before installation.
-5. Install Node 22.13+ and dependencies on the Pi; configure `/etc/family-calendar/calendar.env` with a strong PIN and data directory; enable the app and kiosk services.
-6. Test backup/restore and one code update before adding household data.
-7. Connect Google Calendar account(s), choose calendars, verify a real recurring/all-day/multi-day event, then test outage/recovery.
-8. Upload representative iPhone/Android photos, including HEIC if supported by the Pi's `sharp` build, and measure memory during uploads/slideshow.
-9. Consider an optional Google Photos Picker import or supported voice bridge only after the private core is reliable and its extra permissions/cost/limitations are accepted.
+1. Publish the reviewed phone-update release to the existing public GitHub repository.
+2. On the Pi, follow README's one-time phone-update setup (backup, pull, install helper, restart). Refresh phone controls.
+3. Verify the no-change update check, then a subsequent published release; verify protected backup contents and recovery on a separate data copy.
+4. Finish actual-monitor 1080p, kiosk startup/reboot, iPhone/Android browser and HEIC checks. Measure memory with Chromium during uploads.
+5. Owner reports live Calendar and Photos working; verify recurring/all-day/multi-day edge cases and Calendar outage/recovery on the Pi. Do not repeat account setup unnecessarily.
+6. Keep routine development/testing on the computer, publish reviewed commits, then request installation from the phone. No automatic album sync or voice bridge is planned for this release.
 
 ## Known limitations
 

@@ -107,6 +107,12 @@
             <div class="google-actions"><a class="secondary-button" id="googleConnectButton" href="/api/google/start">Connect Google Calendar</a><button class="text-button" id="googleSyncButton" type="button">Sync now</button></div>
             <p class="form-note">Google credentials stay in the Pi’s private data directory. Demo mode never contacts Google.</p>
           </section>
+          <section class="surface-card control-card">
+            <div class="card-heading-row"><div><p class="section-kicker">APPLICATION</p><h2>Keep your display updated.</h2></div></div>
+            <p class="muted-copy">Install the latest published version from GitHub. The Pi backs up household data first. The display will disconnect while the update installs; leave the Pi powered on.</p>
+            <button class="secondary-button" id="applicationUpdate" type="button" disabled>Update application</button>
+            <p class="save-message" id="applicationUpdateStatus" role="status">Checking updater setup…</p>
+          </section>
         </div>
       </section>
     </main>

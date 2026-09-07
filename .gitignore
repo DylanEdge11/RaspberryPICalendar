@@ -11,3 +11,5 @@ data/*
 *.sqlite-wal
 *.log
 coverage/
+__pycache__/
+*.pyc

@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node server.mjs",
     "test": "node --test",
-    "check": "node --check server.mjs && node --check photos-picker.mjs && node --check static/display.js && node --check static/control.js"
+    "check": "node --check server.mjs && node --check photos-picker.mjs && node --check phone-updates.mjs && node --check static/display.js && node --check static/control.js"
   },
   "dependencies": {
     "sharp": "^0.33.5"

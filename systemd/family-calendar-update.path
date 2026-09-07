@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for a paired phone application update request
+
+[Path]
+PathExists=/var/lib/family-calendar/update-request
+Unit=family-calendar-update.service
+
+[Install]
+WantedBy=multi-user.target

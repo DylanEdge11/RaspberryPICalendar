@@ -39,6 +39,54 @@
   const photosUi = Object.fromEntries(["Connect", "Start", "Open", "Import", "Cancel", "Disconnect", "Status"].map((name) => [name, document.getElementById(`photos${name}`)]));
   let photosTimer;
   let photosProgress = "";
+  const updateButton = document.getElementById('applicationUpdate');
+  const updateMessage = document.getElementById('applicationUpdateStatus');
+  let updateTimer;
+  let updateStartedAt = 0;
+
+  async function refreshUpdater() {
+    clearTimeout(updateTimer);
+    try {
+      if (updateStartedAt) {
+        const health = await requestJson('/api/health');
+        if (health.instance_id !== app.state?.instance_id) { window.location.reload(); return; }
+      }
+      const result = await requestJson('/api/system/update');
+      const busy = ['queued', 'running'].includes(result.state);
+      updateButton.disabled = !result.enabled || busy;
+      updateMessage.textContent = result.message + (result.reason ? ` ${result.reason}` : '') + (result.revision ? ` Version ${result.revision.slice(0, 7)}.` : '');
+      if (busy) {
+        updateStartedAt ||= Date.now();
+        if (Date.now() - updateStartedAt > 20 * 60 * 1000) {
+          updateMessage.textContent = 'The update is taking longer than expected. Check the Pi updater service before retrying.';
+          return;
+        }
+        updateTimer = setTimeout(refreshUpdater, 3000);
+      } else { updateStartedAt = 0; }
+    } catch (error) {
+      updateButton.disabled = true;
+      if (updateStartedAt && Date.now() - updateStartedAt < 20 * 60 * 1000) {
+        updateMessage.textContent = 'The Pi is updating and temporarily offline. Keep it powered on; this page will reconnect.';
+        updateTimer = setTimeout(refreshUpdater, 3000);
+      } else {
+        updateMessage.textContent = updateStartedAt ? 'The Pi has not reconnected. Check its updater service from the terminal.' : error.message;
+      }
+    }
+  }
+
+  updateButton.addEventListener('click', async () => {
+    if (!window.confirm('Back up household data and install the latest GitHub version? The display may be offline for several minutes.')) return;
+    updateButton.disabled = true;
+    updateMessage.textContent = 'Requesting update…';
+    try {
+      await postJson('/api/system/update', {});
+      updateStartedAt = Date.now();
+      await refreshUpdater();
+    } catch (error) {
+      updateMessage.textContent = error.message;
+      updateButton.disabled = false;
+    }
+  });
 
   function renderPicker(state) {
     const job = state.job;
@@ -127,6 +175,7 @@
 
   function showLogin() {
     clearTimeout(photosTimer);
+    clearTimeout(updateTimer);
     dom.loginView.classList.remove("hidden");
     dom.controlsView.classList.add("hidden");
     dom.logoutButton.classList.add("hidden");
@@ -264,6 +313,7 @@
       await loadPhotos();
       await loadGoogle();
       await pickerRequest();
+      await refreshUpdater();
     } catch (error) {
       dom.loginError.textContent = error.message;
     }
@@ -353,6 +403,7 @@
       await loadPhotos();
       await loadGoogle();
       await pickerRequest();
+      await refreshUpdater();
     } catch (error) {
       dom.loginError.textContent = error.message;
       showLogin();

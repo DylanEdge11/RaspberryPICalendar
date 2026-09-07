@@ -110,6 +110,10 @@
 
   async function loadState() {
     const next = await requestJson("/api/state");
+    if (app.state?.instance_id && next.instance_id && app.state.instance_id !== next.instance_id) {
+      window.location.reload();
+      return;
+    }
     const changedPeriod = !app.state || periodKey(app.state) !== periodKey(next);
     const changedCalendar = !app.state || syncKey(app.state) !== syncKey(next);
     const changedPhotos = !app.state || app.state.photo_count !== next.photo_count;
@@ -337,6 +341,10 @@
     app.stream.addEventListener("state", async (message) => {
       try {
         const next = JSON.parse(message.data);
+        if (app.state?.instance_id && next.instance_id && app.state.instance_id !== next.instance_id) {
+          window.location.reload();
+          return;
+        }
         const changedPeriod = !app.state || periodKey(app.state) !== periodKey(next);
         const changedSlideshow = !app.state || app.state.settings.slideshow_seconds !== next.settings.slideshow_seconds;
         const changedCalendar = !app.state || syncKey(app.state) !== syncKey(next);

@@ -7,6 +7,7 @@ import { URL, URLSearchParams } from "node:url";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { createPhotosPicker } from "./photos-picker.mjs";
+import { createUpdateControl } from "./phone-updates.mjs";
 
 const ROOT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const STATIC_DIR = path.join(ROOT_DIR, "static");
@@ -97,6 +98,9 @@ let syncInProgress = false;
 let accountMutationInProgress = false;
 let calendarRevision = 0;
 let uploadQueue = Promise.resolve();
+let pendingUploads = 0;
+const INSTANCE_ID = randomBytes(12).toString('hex');
+const phoneUpdates = createUpdateControl({ dataDir: DATA_DIR, mode: APP_MODE });
 let photosConnecting = false;
 const PHOTOS_SCOPE = "https://www.googleapis.com/auth/photospicker.mediaitems.readonly";
 const pickerAccount = { token_path: path.join("secrets", "google-photos-picker.json") };
@@ -417,7 +421,8 @@ function getStatePayload() {
     period: getPeriodInfo(settings),
     calendar: { ...getSyncStatus(), revision: calendarRevision },
     photo_count: getPhotos().length,
-    server_time: new Date().toISOString()
+    server_time: new Date().toISOString(),
+    instance_id: INSTANCE_ID
   };
 }
 
@@ -601,6 +606,7 @@ function cleanFileName(name) {
 }
 
 async function withUploadSlot(task) {
+  pendingUploads += 1;
   const previous = uploadQueue;
   let release;
   uploadQueue = new Promise((resolve) => { release = resolve; });
@@ -608,6 +614,7 @@ async function withUploadSlot(task) {
   try {
     return await task();
   } finally {
+    pendingUploads -= 1;
     release();
   }
 }
@@ -1023,7 +1030,7 @@ async function refreshGoogleSources(account) {
 }
 
 async function syncCalendars() {
-  if (APP_MODE !== "production" || syncInProgress || accountMutationInProgress) return { skipped: true };
+  if (APP_MODE !== "production" || syncInProgress || accountMutationInProgress || phoneUpdates.busy()) return { skipped: true };
   syncInProgress = true;
   const attemptedAt = new Date().toISOString();
   db.prepare("UPDATE sync_status SET last_attempt_at = ?, error = NULL WHERE id = 1").run(attemptedAt);
@@ -1088,13 +1095,28 @@ async function handleRequest(req, res) {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
   const method = req.method || "GET";
 
+  if (url.pathname === '/api/system/update') {
+    requireAdmin(req);
+    if (method === 'GET') return sendJson(res, 200, phoneUpdates.status());
+    if (method === 'POST') {
+      if (pendingUploads || picker.status().busy || ['selecting', 'ready', 'importing'].includes(picker.status().job?.phase) || photosConnecting || syncInProgress || accountMutationInProgress) {
+        throw httpError(409, 'Wait for photo imports, uploads, or calendar syncing to finish before updating.');
+      }
+      return sendJson(res, 202, phoneUpdates.request());
+    }
+  }
+  if ((method === 'POST' || method === 'DELETE' || url.pathname === '/api/google/start' || url.pathname === '/api/google/callback' || url.pathname === '/api/google-photos/connect')
+      && url.pathname !== '/api/auth/login' && phoneUpdates.busy()) {
+    throw httpError(503, 'Application update in progress. Try again when the Pi reconnects.');
+  }
+
   if (method === "GET" && url.pathname === "/") return serveStatic(res, "index.html");
   if (method === "GET" && url.pathname === "/control") return serveStatic(res, "control.html");
   if (method === "GET" && url.pathname.startsWith("/static/")) return serveStatic(res, url.pathname.slice("/static/".length));
   if (method === "GET" && url.pathname.startsWith("/media/")) return serveMedia(res, url);
 
   if (method === "GET" && url.pathname === "/api/health") {
-    return sendJson(res, 200, { ok: true, mode: APP_MODE, timezone: TIMEZONE, version: "0.1.0", server_time: new Date().toISOString() });
+    return sendJson(res, 200, { ok: true, mode: APP_MODE, timezone: TIMEZONE, version: "0.1.0", server_time: new Date().toISOString(), instance_id: INSTANCE_ID });
   }
   if (method === "GET" && url.pathname === "/api/state") return sendJson(res, 200, getStatePayload());
   if (method === "GET" && url.pathname === "/api/events") {
