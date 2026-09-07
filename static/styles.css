@@ -332,3 +332,33 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--teal); outline-
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Fit the wall display to the browser's available screen, including browser chrome. */
+.display-app { height: 100vh; height: 100dvh; min-height: 0; }
+.display-layout { grid-template-rows: minmax(0, 1fr); }
+.display-topbar, .display-footer { flex-shrink: 0; }
+.calendar-card, .photo-card { min-height: 0; }
+.photo-frame { min-height: 0; aspect-ratio: auto; }
+.week-header, .week-allday { flex-shrink: 0; }
+.month-grid { grid-template-rows: repeat(6, minmax(0, 1fr)); }
+.month-cell { min-height: 0; overflow-y: auto; }
+.month-date { height: 32px; min-height: 32px; margin-bottom: 2px; }
+@media (max-width: 1280px) {
+  .display-app { padding: 10px; gap: 8px; }
+  .calendar-card, .photo-card { padding: 10px; }
+  .calendar-heading { min-height: 0; padding-bottom: 8px; }
+  .calendar-heading .muted-copy, .photo-note { display: none; }
+  .calendar-heading h2 { font-size: 1.2rem; }
+  .calendar-legend { gap: 4px 8px; }
+  .month-event { font-size: 0.68rem; }
+}
+@media (max-width: 900px) {
+  .display-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(145px, 0.25fr); grid-template-rows: minmax(0, 1fr); }
+  .calendar-card, .photo-card, .photo-frame { min-height: 0; }
+}
+@media (orientation: portrait) {
+  .display-layout { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 0.25fr); }
+  .photo-card { gap: 6px; }
+  .photo-header { display: none; }
+}
+.month-cell { scrollbar-width: thin; scrollbar-color: #ced2d0 transparent; }

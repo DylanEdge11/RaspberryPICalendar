@@ -336,3 +336,9 @@ The tablet needs Wi-Fi connectivity to the Pi even if the internet is down. The 
 Development checks on 2026-09-07: `npm run check` and all 18 `npm test` tests passed. In-app Chromium browser checks used 1280×800 landscape, 800×1280 portrait and 1024×768 landscape viewports. Verified event location/date/time details, outside dismissal, Close, Escape, day-list selection and month event selection. These were mouse/keyboard interactions at tablet viewport sizes, not physical Android touch emulation or Samsung hardware performance measurements.
 
 On the actual tablet, check tap accuracy, scrolling, pinch zoom, rotation, screen timeout, Wi-Fi drop/recovery, return from sleep, overnight dimming and Pi reboot recovery. Verify long descriptions and crowded days with real calendar content. Confirm Controls still updates the display from its separate tab. Measure sustained tablet/Pi resource use before claiming this is the most efficient configuration for the particular device. Publish/install this release using the existing update workflow; local changes alone do not update the Pi.
+
+### Tablet screen-fit correction
+
+The wall display now uses the available viewport height (100dvh, with a 100vh fallback). Removed the tall minimum card/month-row sizing that forced page scrolling. Landscape keeps photos beside the calendar; portrait allocates a smaller photo strip below it. Compact headers preserve calendar space. All six month rows fit; crowded day cells and event-detail dialogs can still scroll, and tapping a date opens the full day list. Controls remains separate. This supersedes the earlier note that month view requires page scrolling.
+
+Verified in the development browser: week and month at 1024×600, and month at 800×1280, have document height equal to viewport height. Syntax and diff checks passed. Physical SM-T510 verification and Pi installation remain pending.
