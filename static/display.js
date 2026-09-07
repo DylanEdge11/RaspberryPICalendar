@@ -172,9 +172,10 @@
     const seen = new Map();
     for (const event of app.events) {
       const name = event.calendar || "Calendar";
-      if (!seen.has(name)) seen.set(name, safeColor(event.calendar_color));
+      const color = safeColor(event.calendar_color);
+      seen.set(`${name}:${color}`, [name, color]);
     }
-    const items = [...seen.entries()].slice(0, 5);
+    const items = [...seen.values()].slice(0, 5);
     dom.calendarLegend.innerHTML = items.map(([name, color]) => `<span class="legend-item"><span class="legend-swatch" style="background:${color}"></span>${escapeHtml(name)}</span>`).join("");
   }
 

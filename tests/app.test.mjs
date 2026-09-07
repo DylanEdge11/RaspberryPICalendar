@@ -77,6 +77,7 @@ after(async () => {
 });
 
 test("management state is protected and phone view changes are persisted", async () => {
+  assert.equal((await fetch(`${baseUrl}/api/google/color`, { method: 'POST' })).status, 401);
   for (const method of ['GET', 'POST']) assert.equal((await fetch(`${baseUrl}/api/system/update`, { method })).status, 401);
   for (const [method, route] of [["GET", "status"], ["GET", "connect"], ["POST", "start"], ["POST", "check"], ["POST", "import"], ["POST", "cancel"], ["DELETE", "connection"]]) {
     assert.equal((await fetch(`${baseUrl}/api/google-photos/${route}`, { method, redirect: "manual" })).status, 401);
@@ -141,6 +142,11 @@ test("reconnecting preserves selection; hidden events stay cached; disconnect re
     database.prepare(`INSERT INTO calendar_events(account_id, calendar_id, event_id, title, all_day, start_date, end_date, updated_at)
       VALUES(?, 'calendar-one', 'event-one', 'Test event', 1, '2026-09-07', '2026-09-08', '2026-09-01')`).run(first.id);
     assert.equal(app.getCachedEvents("2026-09-07", "2026-09-14").length, 1);
+    database.prepare("INSERT INTO settings(key,value) VALUES('calendar_color:source-one','#112233')").run();
+    database.prepare("UPDATE calendar_sources SET color='#abcdef'").run();
+    assert.equal(app.getCachedEvents('2026-09-07', '2026-09-14')[0].calendar_color, '#112233', 'Google source refresh cannot overwrite local colour');
+    database.prepare("DELETE FROM settings WHERE key='calendar_color:source-one'").run();
+    assert.equal(app.getCachedEvents('2026-09-07', '2026-09-14')[0].calendar_color, '#abcdef', 'reset uses current source colour');
     database.prepare("UPDATE calendar_sources SET enabled=0 WHERE account_id=?").run(first.id);
     assert.equal(app.getCachedEvents("2026-09-07", "2026-09-14").length, 0);
     assert.equal(database.prepare("SELECT COUNT(*) AS n FROM calendar_events").get().n, 1);
@@ -164,6 +170,27 @@ test("reconnecting preserves selection; hidden events stay cached; disconnect re
     globalThis.fetch = originalFetch;
     database.close();
   }
+});
+
+test('calendar colour API validates, persists, isolates and resets overrides', async () => {
+  const disk = new DatabaseSync(path.join(childDataDir, 'calendar.sqlite'));
+  disk.prepare("INSERT INTO google_accounts(id,label,token_path,created_at) VALUES('colour-test','Test','secrets/test.json','2026-09-01')").run();
+  for (const id of ['colour-a', 'colour-b']) disk.prepare("INSERT INTO calendar_sources(id,account_id,calendar_id,summary,color,enabled,updated_at) VALUES(?,'colour-test',?,'Test','#aabbcc',1,'2026-09-01')").run(id,id);
+  const save = (id, color) => fetch(`${baseUrl}/api/google/color`, { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ id, color }) });
+  assert.equal((await save('missing','#123456')).status,404);
+  for (const value of ['red','#fff','<script>',7]) assert.equal((await save('colour-a',value)).status,400);
+  const payload = await (await save('colour-a','#123ABC')).json();
+  assert.equal(payload.sources.find(s=>s.id==='colour-a').color,'#123abc');
+  assert.equal(payload.sources.find(s=>s.id==='colour-b').color,'#aabbcc');
+  assert.equal(disk.prepare("SELECT value FROM settings WHERE key='calendar_color:colour-a'").get().value,'#123abc');
+  disk.close();
+  const reopened = new DatabaseSync(path.join(childDataDir, 'calendar.sqlite'));
+  assert.equal(reopened.prepare("SELECT value FROM settings WHERE key='calendar_color:colour-a'").get().value,'#123abc');
+  const reset = await (await save('colour-a',null)).json();
+  assert.equal(reset.sources.find(s=>s.id==='colour-a').color,'#aabbcc');
+  reopened.prepare("DELETE FROM calendar_sources WHERE account_id='colour-test'").run();
+  reopened.prepare("DELETE FROM google_accounts WHERE id='colour-test'").run();
+  reopened.close();
 });
 
 test("event API returns the requested range and no live account claim in demo mode", async () => {

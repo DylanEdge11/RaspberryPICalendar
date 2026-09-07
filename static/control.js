@@ -275,10 +275,12 @@
     }
     dom.googleAccountList.innerHTML = app.google.accounts.map((account) => {
       const sources = app.google.sources.filter((source) => source.account_id === account.id);
-      const sourceHtml = sources.length ? `<div class="calendar-source-list">${sources.map((source) => `<label class="calendar-source"><input type="checkbox" data-source-id="${escapeHtml(source.id)}" ${source.enabled ? "checked" : ""}><span class="calendar-source-dot" style="--source-color:${/^#[0-9a-f]{6}$/i.test(source.color || "") ? source.color : "#6d7bea"}"></span><span>${escapeHtml(source.summary)}</span></label>`).join("")}</div>` : `<small>No readable calendars returned yet.</small>`;
+      const sourceHtml = sources.length ? `<div class="calendar-source-list">${sources.map((source) => `<div class="calendar-colour-row"><label class="calendar-source"><input type="checkbox" data-source-id="${escapeHtml(source.id)}" ${source.enabled ? "checked" : ""}><span>${escapeHtml(source.summary)}</span></label><div class="calendar-colour-actions"><label>Colour <input type="color" data-colour-id="${escapeHtml(source.id)}" aria-label="Colour for ${escapeHtml(source.summary)}" value="${/^#[0-9a-f]{6}$/i.test(source.color || '') ? source.color : '#6d7bea'}"></label><button type="button" class="secondary-button" data-reset-colour="${escapeHtml(source.id)}" ${source.custom_color ? '' : 'disabled'}>Use Google colour</button></div></div>`).join("")}</div><p class="muted-copy">Colours save automatically on this display only; your Google calendars are unchanged.</p><p class="save-message" data-colour-message role="status"></p>` : `<small>No readable calendars returned yet.</small>`;
       return `<div class="google-account"><strong>${escapeHtml(account.label)}</strong><small>Connected ${escapeHtml(new Date(account.created_at).toLocaleString())}</small>${account.last_error ? `<small class="form-error">${escapeHtml(account.last_error)}</small>` : ""}${sourceHtml}<button type="button" class="secondary-button" data-disconnect-id="${escapeHtml(account.id)}">Disconnect account</button></div>`;
     }).join("");
     dom.googleAccountList.querySelectorAll("[data-source-id]").forEach((input) => input.addEventListener("change", saveGoogleSources));
+    dom.googleAccountList.querySelectorAll('[data-colour-id]').forEach((input) => input.addEventListener('change', () => saveCalendarColour(input.dataset.colourId, input.value)));
+    dom.googleAccountList.querySelectorAll('[data-reset-colour]').forEach((button) => button.addEventListener('click', () => saveCalendarColour(button.dataset.resetColour, null)));
     dom.googleAccountList.querySelectorAll("[data-disconnect-id]").forEach((button) => button.addEventListener("click", async () => {
       if (!window.confirm("Remove this connection and its events from this display? Your Google calendars will not be deleted. Other connections remain connected.")) return;
       button.disabled = true;
@@ -291,6 +293,18 @@
         button.disabled = false;
       }
     }));
+  }
+
+  async function saveCalendarColour(id, color) {
+    dom.googleAccountList.querySelectorAll('input, button').forEach((input) => { input.disabled = true; });
+    try {
+      app.google = await postJson('/api/google/color', { id, color });
+      renderGoogle();
+      dom.googleAccountList.querySelectorAll('[data-colour-message]').forEach((element) => { element.textContent = 'Colour saved on the Pi.'; });
+    } catch (error) {
+      renderGoogle();
+      dom.googleAccountList.querySelectorAll('[data-colour-message]').forEach((element) => { element.textContent = error.message; });
+    }
   }
 
   async function saveGoogleSources() {

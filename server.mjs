@@ -751,9 +751,11 @@ function getCachedEvents(start, end) {
   const rangeStartMs = Date.parse(googleBoundary(start));
   const rangeEndMs = Date.parse(googleBoundary(end));
   const rows = db.prepare(`
-    SELECT e.*, s.summary AS calendar_summary, s.color AS source_color
+    SELECT e.*, s.id AS source_id, s.summary AS calendar_summary, s.color AS source_color,
+      custom.value AS custom_color
     FROM calendar_events e
     LEFT JOIN calendar_sources s ON s.account_id = e.account_id AND s.calendar_id = e.calendar_id
+    LEFT JOIN settings custom ON custom.key = 'calendar_color:' || s.id
     WHERE s.enabled = 1 AND ((e.all_day = 1 AND e.start_date < ? AND e.end_date > ?)
        OR (e.all_day = 0 AND e.end_ms > ? AND e.start_ms < ?))
     ORDER BY e.start_date, e.start_local, e.title
@@ -762,7 +764,7 @@ function getCachedEvents(start, end) {
     id: `${row.account_id}:${row.calendar_id}:${row.event_id}`,
     title: row.title,
     calendar: row.calendar_summary || row.calendar_id,
-    calendar_color: row.color || row.source_color || "#6d7bea",
+    calendar_color: row.custom_color || row.source_color || row.color || "#6d7bea",
     start_date: row.start_date,
     end_date: row.end_date,
     start_time: row.all_day ? null : row.start_local?.slice(11, 16),
@@ -785,7 +787,11 @@ function validRange(url) {
 
 function getAccountsAndSources() {
   const accounts = db.prepare("SELECT id, label, email, created_at, last_error FROM google_accounts ORDER BY created_at").all();
-  const sources = db.prepare(`SELECT id, account_id, calendar_id, summary, description, color, enabled, updated_at FROM calendar_sources ORDER BY summary`).all().map((source) => ({ ...source, enabled: Boolean(source.enabled) }));
+  const sources = db.prepare(`SELECT s.id, s.account_id, s.calendar_id, s.summary, s.description,
+    COALESCE(custom.value, s.color) AS color, s.enabled, s.updated_at,
+    custom.value AS custom_color FROM calendar_sources s
+    LEFT JOIN settings custom ON custom.key = 'calendar_color:' || s.id
+    ORDER BY s.summary`).all().map((source) => ({ ...source, enabled: Boolean(source.enabled) }));
   return { accounts, sources };
 }
 
@@ -908,6 +914,7 @@ function disconnectGoogleAccount(id) {
   // Foreign-key cascades remove only this connection's sources and cached events.
   // Do not revoke Google's grant: duplicate connections may share that grant.
   fs.rmSync(safeDataPath(account.token_path), { force: true });
+  db.prepare("DELETE FROM settings WHERE key IN (SELECT 'calendar_color:' || id FROM calendar_sources WHERE account_id=?)").run(id);
   db.prepare("DELETE FROM google_accounts WHERE id = ?").run(id);
   calendarRevision += 1;
   broadcastState();
@@ -1272,6 +1279,18 @@ async function handleRequest(req, res) {
   if (method === "GET" && url.pathname === "/api/google/accounts") {
     requireAdmin(req);
     return sendJson(res, 200, getAccountsAndSources());
+  }
+  if (method === 'POST' && url.pathname === '/api/google/color') {
+    requireAdmin(req);
+    const body = await readJson(req);
+    if (typeof body.id !== 'string' || !db.prepare('SELECT id FROM calendar_sources WHERE id=?').get(body.id)) throw httpError(404, 'Calendar not found');
+    if (body.color !== null && (typeof body.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(body.color))) throw httpError(400, 'Choose a valid calendar colour');
+    const key = `calendar_color:${body.id}`;
+    if (body.color === null) db.prepare('DELETE FROM settings WHERE key=?').run(key);
+    else setSetting(key, body.color.toLowerCase());
+    calendarRevision += 1;
+    broadcastState();
+    return sendJson(res, 200, { ok: true, ...getAccountsAndSources() });
   }
   if (method === "POST" && url.pathname === "/api/google/sources") {
     requireAdmin(req);

@@ -83,6 +83,8 @@ Production refuses to start without `ADMIN_PIN`. Port 8080 is plain HTTP on the 
 
 ### Google Calendar setup
 
+**Calendar colours:** In paired phone controls → Calendars, use the **Colour** picker beside each calendar. Choices save automatically and update the weekly/monthly display without a Google sync. **Use Google colour** removes your local choice. This changes only the household display, not the colours in Google Calendar. Overrides persist in SQLite through restarts and Google refreshes and are included in backups. Disconnecting an account removes its local colour choices. No schema migration or updater-helper installation is needed for this release.
+
 1. In Google Cloud, create/select a project and enable Google Calendar API.
 2. Configure the OAuth consent screen and create a Web application OAuth client. Add the exact `GOOGLE_REDIRECT_URI` to its authorized redirect URIs. Google permits an `http://localhost` callback for a flow started in the Pi's own browser. A phone-initiated flow requires an exact HTTPS callback on a domain you control; a `.local` hostname over HTTP is not a valid general web-app redirect.
 3. Put the downloaded client JSON outside the repository and set `GOOGLE_CLIENT_SECRETS` to its path.
