@@ -42,7 +42,6 @@
     photoCaption: document.getElementById("photoCaption"),
     photoCaptionBar: document.getElementById("photoCaptionBar"),
     photoIndex: document.getElementById("photoIndex"),
-    photoNote: document.getElementById("photoNote"),
     footerMessage: document.getElementById("footerMessage"),
     connectionMessage: document.getElementById("connectionMessage")
   };
@@ -96,6 +95,7 @@
     const city = app.state.settings.weather_city;
     const data = weatherData;
     const weekly = app.state.settings.weather_duration === "weekly";
+    weatherDialog.classList.toggle("hourly-weather", !weekly);
     document.getElementById("weatherTitle").textContent = (data?.location.name || city) + " · " + (weekly ? "Next 7 days" : "Hourly today");
     if (!data) {
       weatherButton.textContent = "☁ " + city + (weatherError ? " · Unavailable" : " · Loading…");
@@ -104,7 +104,12 @@
     }
     const [icon, label] = conditions(data.current.weather_code);
     const stale = data.stale || Boolean(weatherError);
-    weatherButton.innerHTML = '<span class="weather-widget-top">' + escapeHtml(city) + '<span aria-hidden="true">↗</span></span><span class="weather-widget-main"><span aria-hidden="true">' + icon + '</span><strong>' + degrees(data.current.temperature_2m) + '<small>C</small></strong></span><span class="weather-widget-caption">' + label + ' · ' + (stale ? 'Last saved' : 'View forecast') + '</span>';
+    const theme = ({ Clear: 'sunny', 'Partly cloudy': 'partly', Overcast: 'cloudy', Fog: 'fog', Rain: 'rain', Snow: 'snow', Thunderstorms: 'storm' })[label] || 'cloudy';
+    weatherButton.dataset.weather = theme;
+    weatherDialog.dataset.weather = theme;
+    const todayHigh = degrees(data.daily.temperature_2m_max?.[0]);
+    const todayLow = degrees(data.daily.temperature_2m_min?.[0]);
+    weatherButton.innerHTML = '<span class="weather-scene" aria-hidden="true"><i class="scene-sun"></i><i class="scene-cloud cloud-one"></i><i class="scene-cloud cloud-two"></i><i class="scene-precip"></i></span><span class="weather-bar-content"><span class="weather-bar-current"><span class="weather-bar-temperature">' + degrees(data.current.temperature_2m) + '<small>C</small></span><span class="weather-bar-location"><strong>' + escapeHtml(city) + '</strong><span>' + label + '</span></span></span><span class="weather-bar-details"><span>Feels like <b>' + degrees(data.current.apparent_temperature) + '</b></span><span>High <b>' + todayHigh + '</b> · Low <b>' + todayLow + '</b></span></span><span class="weather-bar-link">' + (stale ? 'Last saved · ' : '') + 'Forecast <span aria-hidden="true">↗</span></span></span>';
     weatherButton.setAttribute("aria-label", city + ": " + degrees(data.current.temperature_2m) + " Celsius, " + label + ". Open " + (weekly ? "7-day forecast" : "today's hourly forecast"));
     const today = new Intl.DateTimeFormat("en-CA", { timeZone: data.timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
     const source = weekly ? data.daily : data.hourly;
@@ -477,7 +482,7 @@
   albumTrigger.addEventListener("keydown", event => {
     if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openAlbum(); }
   });
-  for (const id of ["closeAlbum", "backToCalendar"]) {
+  for (const id of ["closeAlbum"]) {
     document.getElementById(id).addEventListener("click", () => albumDialog.close());
   }
   albumDialog.addEventListener("close", () => albumTrigger.focus());
@@ -493,7 +498,6 @@
       dom.photoImage.classList.remove("loaded");
       dom.photoCaption.textContent = "No photos yet";
       dom.photoIndex.textContent = "—";
-      dom.photoNote.textContent = "Add family photos from the phone controls; uploaded photos stay on this Pi.";
       return;
     }
     const photo = app.photos[app.photoIndex % count];
@@ -504,7 +508,6 @@
     dom.photoImage.src = `${photo.url}${photo.demo ? "" : `?v=${encodeURIComponent(photo.created_at || "")}`}`;
     dom.photoCaption.textContent = photo.demo ? "Sample image · demo" : (photo.original_name || "Family photo");
     dom.photoIndex.textContent = `${String(app.photoIndex + 1).padStart(2, "0")} / ${String(count).padStart(2, "0")}`;
-    dom.photoNote.textContent = app.state?.mode === "demo" ? "Demo images are labelled; uploaded photos can be added from the phone controls." : "Photos stay on this Pi and keep cycling if the internet goes away.";
     const preload = new Image();
     preload.src = next.url;
   }
