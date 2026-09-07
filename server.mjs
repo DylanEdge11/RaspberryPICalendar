@@ -39,6 +39,8 @@ const DEFAULT_SETTINGS = {
   view: "week",
   anchor_date: todayKey(),
   week_start: "monday",
+  weekly_start_hour: "6",
+  weekly_end_hour: "22",
   slideshow_seconds: "12",
   show_photo_captions: "false",
   overnight_enabled: "true",
@@ -247,6 +249,8 @@ function readSettings() {
     view: values.view === "month" ? "month" : "week",
     anchor_date: isDateKey(values.anchor_date) ? values.anchor_date : todayKey(),
     week_start: values.week_start === "sunday" ? "sunday" : "monday",
+    weekly_start_hour: clampInteger(values.weekly_start_hour ?? 6, 0, 23),
+    weekly_end_hour: clampInteger(values.weekly_end_hour ?? 22, 1, 24),
     slideshow_seconds: clampInteger(values.slideshow_seconds || 12, 5, 60),
     show_photo_captions: values.show_photo_captions === "true",
     overnight_enabled: values.overnight_enabled !== "false",
@@ -259,6 +263,15 @@ function readSettings() {
 function updateSettings(patch) {
   const current = readSettings();
   const next = { ...current };
+  for (const [key, min, max] of [['weekly_start_hour', 0, 23], ['weekly_end_hour', 1, 24]]) {
+    if (patch[key] !== undefined) {
+      if (typeof patch[key] !== 'number' || !Number.isInteger(patch[key]) || patch[key] < min || patch[key] > max) {
+        throw httpError(400, `${key} must be a whole hour between ${min} and ${max}`);
+      }
+      next[key] = patch[key];
+    }
+  }
+  if (next.weekly_end_hour <= next.weekly_start_hour) throw httpError(400, 'Weekly end time must be later than start time. Choose midnight (end of day) for late events.');
   if (patch.view !== undefined) {
     if (!['week', 'month'].includes(patch.view)) throw httpError(400, "view must be week or month");
     next.view = patch.view;

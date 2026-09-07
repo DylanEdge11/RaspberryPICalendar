@@ -18,6 +18,8 @@
     todayButton: document.getElementById("todayButton"),
     nextButton: document.getElementById("nextButton"),
     weekStart: document.getElementById("weekStart"),
+    weeklyStartHour: document.getElementById("weeklyStartHour"),
+    weeklyEndHour: document.getElementById("weeklyEndHour"),
     slideshowSeconds: document.getElementById("slideshowSeconds"),
     showPhotoCaptions: document.getElementById("showPhotoCaptions"),
     displayTitleInput: document.getElementById("displayTitleInput"),
@@ -36,6 +38,9 @@
   };
 
   const app = { state: null, photos: [], google: { accounts: [], sources: [] } };
+  const hourLabel = (hour) => hour === 24 ? 'Midnight (end of day)' : `${hour % 12 || 12} ${hour >= 12 ? 'PM' : 'AM'}`;
+  dom.weeklyStartHour.innerHTML = Array.from({ length: 24 }, (_, h) => `<option value="${h}">${hourLabel(h)}</option>`).join('');
+  dom.weeklyEndHour.innerHTML = Array.from({ length: 24 }, (_, i) => `<option value="${i + 1}">${hourLabel(i + 1)}</option>`).join('');
   const photosUi = Object.fromEntries(["Connect", "Start", "Open", "Import", "Cancel", "Disconnect", "Status"].map((name) => [name, document.getElementById(`photos${name}`)]));
   let photosTimer;
   let photosProgress = "";
@@ -199,6 +204,8 @@
     dom.controlPeriod.textContent = `${settings.view === "month" ? "Month" : "Week"} · ${periodText(app.state)}`;
     document.querySelectorAll("[data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === settings.view));
     dom.weekStart.value = settings.week_start;
+    dom.weeklyStartHour.value = settings.weekly_start_hour ?? 6;
+    dom.weeklyEndHour.value = settings.weekly_end_hour ?? 22;
     dom.slideshowSeconds.value = settings.slideshow_seconds;
     dom.showPhotoCaptions.checked = Boolean(settings.show_photo_captions);
     dom.displayTitleInput.value = settings.display_title;
@@ -343,6 +350,8 @@
     try {
       app.state = (await postJson("/api/state", {
         week_start: dom.weekStart.value,
+        weekly_start_hour: Number(dom.weeklyStartHour.value),
+        weekly_end_hour: Number(dom.weeklyEndHour.value),
         slideshow_seconds: Number(dom.slideshowSeconds.value),
         show_photo_captions: dom.showPhotoCaptions.checked,
         display_title: dom.displayTitleInput.value,

@@ -242,6 +242,14 @@ Also back up `/etc/family-calendar/calendar.env` and the Google client JSON thro
 
 To restore, stop the service, preserve the current data directory as a safety copy, verify the backup checksum, restore `calendar.sqlite` and the `photos/` and `secrets/` archives into `APP_DATA_DIR`, remove any stale `calendar.sqlite-wal` and `calendar.sqlite-shm` files, fix ownership, and start the matching application commit. Verify the health endpoint, photo list, settings, and calendar connection before removing the safety copy. The restore operation is intentionally manual because overwriting household data is a destructive action.
 
+## Weekly calendar hours
+
+In phone controls → **Display settings**, choose **Weekly start time** and **Weekly end time**, then **Save settings**. Changes appear immediately on the display and persist in SQLite. Whole hours are supported, from 12 AM through midnight at the end of the day. To include an 11 PM event, choose **Midnight (end of day)** as the end time. The default remains 6 AM–10 PM (the last hourly label is 9 PM).
+
+End must be later than start; an overnight range cannot wrap across calendar days. Choose a full 12 AM–midnight day if needed. Month view and all-day events are unaffected. Timed events outside the selected range are hidden; crossing events are clipped to the range. Wider ranges compress hourly rows to fit the display, and short event blocks show their title with full time in the hover tooltip. Small screens may still scroll. Quiet hours are separate and can dim the display even when late calendar hours are selected.
+
+This release adds settings only, with no schema migration or privileged updater changes. Install through **Application → Update application** after the one-time updater setup. No new Google authorization or Pi terminal setup is required. Older code can ignore these settings on rollback; photos and connections remain outside the checkout.
+
 ## Photo handling
 
 Photo labels (the filename/counter overlay) are hidden by default for family photos. In phone controls → Display settings, enable **Show photo labels** and save to restore them. The preference is stored on the Pi and updates the display immediately; demo images always keep their sample label.

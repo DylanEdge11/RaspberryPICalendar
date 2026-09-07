@@ -108,6 +108,23 @@ test("management state is protected and phone view changes are persisted", async
   assert.equal((await previousMonth.json()).state.settings.anchor_date, "2026-02-28");
 });
 
+test('weekly hours validate and persist without changing month ranges', async () => {
+  const save = (body) => fetch(`${baseUrl}/api/state`, { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify(body) });
+  const initial = await (await fetch(`${baseUrl}/api/state`)).json();
+  assert.equal(initial.settings.weekly_start_hour, 6);
+  assert.equal(initial.settings.weekly_end_hour, 22);
+  for (const body of [{ weekly_start_hour: -1 }, { weekly_end_hour: 25 }, { weekly_start_hour: 6.5 }, { weekly_end_hour: '24' }, { weekly_start_hour: 22 }, { weekly_end_hour: 5 }]) {
+    assert.equal((await save(body)).status, 400);
+  }
+  const changed = await (await save({ weekly_start_hour: 0, weekly_end_hour: 24 })).json();
+  assert.deepEqual(changed.state.period, initial.period);
+  const disk = new DatabaseSync(path.join(childDataDir, 'calendar.sqlite'));
+  assert.equal(disk.prepare("SELECT value FROM settings WHERE key='weekly_start_hour'").get().value, '0');
+  assert.equal(disk.prepare("SELECT value FROM settings WHERE key='weekly_end_hour'").get().value, '24');
+  disk.close();
+  assert.equal((await save({ weekly_start_hour: 23, weekly_end_hour: 24 })).status, 200);
+});
+
 test("reconnecting preserves selection; hidden events stay cached; disconnect removes only its account", async () => {
   const database = new DatabaseSync(path.join(testDataDir, "calendar.sqlite"));
   const originalFetch = globalThis.fetch;

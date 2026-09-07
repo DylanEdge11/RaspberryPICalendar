@@ -34,8 +34,9 @@
     stream: null
   };
 
-  const TIME_START = 6 * 60;
-  const TIME_END = 22 * 60;
+  let TIME_START = 6 * 60;
+  let TIME_END = 22 * 60;
+  let weeklyRowHeight = 43;
 
   function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[character]));
@@ -177,12 +178,18 @@
     dom.calendarLegend.innerHTML = items.map(([name, color]) => `<span class="legend-item"><span class="legend-swatch" style="background:${color}"></span>${escapeHtml(name)}</span>`).join("");
   }
 
+  window.addEventListener('resize', () => renderCalendar());
+
   function renderCalendar() {
     if (!app.state?.period) return;
     dom.calendarMount.innerHTML = app.state.settings.view === "month" ? renderMonth() : renderWeek();
   }
 
   function renderWeek() {
+    TIME_START = (app.state.settings.weekly_start_hour ?? 6) * 60;
+    TIME_END = (app.state.settings.weekly_end_hour ?? 22) * 60;
+    const hours = (TIME_END - TIME_START) / 60;
+    weeklyRowHeight = Math.max(18, Math.min(60, (dom.calendarMount.clientHeight - 125) / hours));
     const dates = [];
     for (let date = app.state.period.start; date < app.state.period.end; date = addDays(date, 1)) dates.push(date);
     const dayHeadings = dates.map((date) => {
@@ -196,8 +203,8 @@
       return `<div class="allday-cell">${visible}${more}</div>`;
     }).join("");
     const dayCanvases = dates.map((date) => renderDayCanvas(date)).join("");
-    const timeLabels = Array.from({ length: 16 }, (_, index) => `<div class="time-label">${formatHour(TIME_START / 60 + index)}</div>`).join("");
-    return `<div class="week-view">
+    const timeLabels = Array.from({ length: hours }, (_, index) => `<div class="time-label">${formatHour(TIME_START / 60 + index)}</div>`).join("");
+    return `<div class="week-view" style="--visible-hours:${hours};--row-height:${weeklyRowHeight}px">
       <div class="week-header"><div></div><div class="week-head-days">${dayHeadings}</div></div>
       <div class="week-allday"><div class="time-gutter-label">ALL<br>DAY</div><div class="allday-days">${allDay}</div></div>
       <div class="week-time-row"><div class="time-axis">${timeLabels}</div><div class="day-canvases">${dayCanvases}</div></div>
@@ -218,21 +225,21 @@
       const left = (lane * 100) / laneCount;
       const width = 100 / laneCount;
       const time = event.start_time ? `${formatTime(event.start_time)}${event.end_time ? ` – ${formatTime(event.end_time)}` : ""}` : "";
-      return `<div class="timed-event" style="--event-color:${color};top:${top}px;height:${height}px;left:calc(${left}% + 2px);width:calc(${width}% - 5px)" title="${escapeHtml(`${event.title}${time ? ` · ${time}` : ""}`)}"><strong>${escapeHtml(event.title)}</strong><span>${escapeHtml(time)}</span></div>`;
+      return `<div class="timed-event ${height < 34 ? 'compact-event' : ''}" style="--event-color:${color};top:${top}px;height:${height}px;left:calc(${left}% + 2px);width:calc(${width}% - 5px)" title="${escapeHtml(`${event.title}${time ? ` · ${time}` : ""}`)}"><strong>${escapeHtml(event.title)}</strong><span>${escapeHtml(time)}</span></div>`;
     }).join("");
     return `<div class="day-canvas ${date === app.state.today ? "today" : ""}">${html}</div>`;
   }
 
   function positionEvents(events, date) {
-    const rowHeight = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row-height")) || 43;
+    const rowHeight = weeklyRowHeight;
     const sorted = events.map((event) => {
       const start = event.start_date === date ? timeToMinutes(event.start_time) ?? TIME_START : TIME_START;
       const end = event.end_date === date ? timeToMinutes(event.end_time) ?? TIME_END : TIME_END;
       return { event, start, end };
-    }).filter((item) => item.end > item.start).map((item) => {
+    }).filter((item) => item.end > item.start && item.end > TIME_START && item.start < TIME_END).map((item) => {
       let { start, end } = item;
       start = Math.max(TIME_START, Math.min(TIME_END, start));
-      end = Math.max(start + 20, Math.min(TIME_END, end));
+      end = Math.min(TIME_END, Math.max(start + 20, end));
       return { ...item, start, end };
     }).filter((item) => item.end > TIME_START && item.start < TIME_END).sort((a, b) => a.start - b.start || a.end - b.end);
     const laneEnds = [];
@@ -241,7 +248,9 @@
       let lane = laneEnds.findIndex((end) => end <= item.start);
       if (lane < 0) lane = laneEnds.length;
       laneEnds[lane] = item.end;
-      positioned.push({ ...item, lane, top: ((item.start - TIME_START) / 60) * rowHeight + 2, height: Math.max(22, ((item.end - item.start) / 60) * rowHeight - 4) });
+      const top = ((item.start - TIME_START) / 60) * rowHeight;
+      const available = ((TIME_END - item.start) / 60) * rowHeight;
+      positioned.push({ ...item, lane, top, height: Math.min(available, Math.max(22, ((item.end - item.start) / 60) * rowHeight - 2)) });
     }
     return positioned.map((item) => ({ ...item, laneCount: laneEnds.length }));
   }

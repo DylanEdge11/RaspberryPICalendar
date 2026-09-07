@@ -13,6 +13,8 @@ Updated: 2026-09-06
 
 ## Completed
 
+- Configurable weekly start/end hours in paired phone settings: integer hours 0–24, end after start, existing 6–22 default, persisted SQLite settings, immediate live display updates, dynamic hourly grid and corrected boundary clipping. Full-day and 11 PM–midnight supported; month/all-day unchanged. No schema or updater-helper changes.
+- Weekly-hours verification: 17 Node tests pass (validation, persisted database values, unchanged month period included). Headless Edge inspected at 1920×1080 and phone width 390: full 24-hour grid, live switch to a one-hour range, and a mocked 11 PM event visible through midnight. Phone midnight option fits after layout correction. Actual phone updater and Pi rendering still require owner verification.
 - Phone application updates: authenticated request/status API, mobile confirmation/progress, root-owned fixed-purpose systemd updater, clean-origin/ancestry checks, stopped-service private backup including configuration, dependency/syntax/health checks, and schema-aware rollback attempt. Display reloads on backend instance changes. One-time Pi installer required; helper upgrades remain manual. No schema migration.
 - Current verification: 16 Node tests and 6 mocked Python updater tests pass. Mobile update request/progress/completion inspected in headless Edge at 390×844 with no page errors or horizontal overflow. Actual Pi update/backup/recovery and reboot are not tested here. See README phone-update setup and recovery instructions.
 - Photo filename/counter overlays are hidden by default for real photos. Phone setting **Show photo labels** persists in SQLite and updates the display live. Demo image labels remain visible. Owner reports Google Photos Picker is now working on the Pi.
