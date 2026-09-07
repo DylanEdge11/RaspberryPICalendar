@@ -52,6 +52,7 @@ The valid-image upload path was exercised with a PNG after installing the locked
 ## Known limitations
 
 - No real Google credentials, Pi hardware, monitor resolution, or Nest speaker is available in this workspace, so those paths are documented but not claimed tested.
+- Pi information verified by the owner: `aarch64` architecture, 64-bit userspace, Linux/Debian 13 (Trixie), Chromium 152.9.7977.75, Node.js `v22.23.2`, npm `10.9.3`, approximately 1.4 GiB available memory, 1.8 GiB zram swap, and approximately 105 GB available storage. Desktop/session configuration and application performance remain unverified.
 - The kiosk service, Pi architecture-specific install, and real monitor sizing remain unverified; use the documented user-session/autostart fallback if the system service starts before the desktop session.
 - The first private GitHub commit and remote still need to be created before rollback/update instructions can be used.
 - `sharp` support for HEIC depends on the ARM/libvips build installed on the Pi; the app reports a clear failure rather than silently treating HEIC as JPEG.
