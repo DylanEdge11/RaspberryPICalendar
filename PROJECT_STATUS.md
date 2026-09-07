@@ -13,6 +13,8 @@ Updated: 2026-09-06
 
 ## Completed
 
+- Photo filename/counter overlays are hidden by default for real photos. Phone setting **Show photo labels** persists in SQLite and updates the display live. Demo image labels remain visible. Owner reports Google Photos Picker is now working on the Pi.
+
 - Google Photos Picker manual import: separate Photos OAuth using existing callback/client, phone selection/search, explicit import, progress, expiry/cancel/disconnect, pagination and persistent-ID duplicate skips. One connection and import at a time; 100-item batch, sequential bounded downloads through shared image pipeline. Local saved photos; no automatic album subscription. No database migration.
 - Photos verification: 15 tests pass with mocked Google responses plus real PNG upload/resize/duplicate/delete. Phone-sized rendering and selection/import flow checked with Playwright/headless Edge at 390×844, 412×915, and 1920×1080 (no horizontal overflow or JS errors). Live Google Photos consent/downloads on Pi, actual Safari/Android Chrome, and Pi memory under import remain untested.
 - Photos next setup: enable Google Photos Picker API and its selected-items scope; connect once on Pi at localhost/control, then select/import from phone. See README. Sessions/jobs are in memory; after restart select unfinished photos again. Completed files and duplicate IDs persist. Local Photos disconnect keeps imported files.

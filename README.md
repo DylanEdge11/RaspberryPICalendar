@@ -210,6 +210,8 @@ To restore, stop the service, preserve the current data directory as a safety co
 
 ## Photo handling
 
+Photo labels (the filename/counter overlay) are hidden by default for family photos. In phone controls → Display settings, enable **Show photo labels** and save to restore them. The preference is stored on the Pi and updates the display immediately; demo images always keep their sample label.
+
 Supported inputs are JPEG, PNG, GIF, WebP, AVIF, and HEIC/HEIF only when the Pi's installed `sharp`/libvips build can decode them. The server checks file signatures, rejects unsupported formats, rejects duplicates by SHA-256, limits requests to 20 MB, rejects decoded images over 40 million pixels, corrects EXIF orientation, and writes a display JPEG no larger than 1920×1080. Server-side processing is serialized, and the default collection limit is 500 photos or 2 GiB of original files; adjust the limits only after measuring storage and memory.
 
 iPhone users should try HEIC first after installing the Pi dependencies. If the installed ARM image stack cannot decode it, the control page returns a clear error; export/share as JPEG or PNG rather than assuming every iPhone photo is JPEG. Existing uploaded photos are local and continue cycling without internet access.

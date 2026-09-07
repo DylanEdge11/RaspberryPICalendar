@@ -17,6 +17,7 @@
     photoImage: document.getElementById("photoImage"),
     photoEmpty: document.getElementById("photoEmpty"),
     photoCaption: document.getElementById("photoCaption"),
+    photoCaptionBar: document.getElementById("photoCaptionBar"),
     photoIndex: document.getElementById("photoIndex"),
     photoNote: document.getElementById("photoNote"),
     footerMessage: document.getElementById("footerMessage"),
@@ -157,6 +158,7 @@
     dom.syncStatus.innerHTML = `<span class="status-dot"></span>${escapeHtml(calendar?.label || "Calendar status unknown")}`;
     updateClock();
     updateNightMode();
+    updatePhotoCaptionVisibility();
     renderLegend();
     renderCalendar();
   }
@@ -267,7 +269,14 @@
     return end > start;
   }
 
+  function updatePhotoCaptionVisibility() {
+    const photo = app.photos[app.photoIndex % app.photos.length];
+    // Sample images remain explicitly labelled even when real-photo labels are hidden.
+    dom.photoCaptionBar.classList.toggle("hidden", !photo?.demo && !app.state?.settings?.show_photo_captions);
+  }
+
   function renderPhoto() {
+    updatePhotoCaptionVisibility();
     const count = app.photos.length;
     dom.photoCount.textContent = count ? `${String(count).padStart(2, "0")}` : "—";
     dom.photoEmpty.classList.toggle("hidden", Boolean(count));

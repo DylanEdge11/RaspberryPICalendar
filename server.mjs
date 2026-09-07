@@ -39,6 +39,7 @@ const DEFAULT_SETTINGS = {
   anchor_date: todayKey(),
   week_start: "monday",
   slideshow_seconds: "12",
+  show_photo_captions: "false",
   overnight_enabled: "true",
   overnight_start: "22:30",
   overnight_end: "06:30",
@@ -243,6 +244,7 @@ function readSettings() {
     anchor_date: isDateKey(values.anchor_date) ? values.anchor_date : todayKey(),
     week_start: values.week_start === "sunday" ? "sunday" : "monday",
     slideshow_seconds: clampInteger(values.slideshow_seconds || 12, 5, 60),
+    show_photo_captions: values.show_photo_captions === "true",
     overnight_enabled: values.overnight_enabled !== "false",
     overnight_start: isTimeKey(values.overnight_start) ? values.overnight_start : "22:30",
     overnight_end: isTimeKey(values.overnight_end) ? values.overnight_end : "06:30",
@@ -273,6 +275,10 @@ function updateSettings(patch) {
     next.slideshow_seconds = seconds;
   }
   if (patch.overnight_enabled !== undefined) next.overnight_enabled = Boolean(patch.overnight_enabled);
+  if (patch.show_photo_captions !== undefined) {
+    if (typeof patch.show_photo_captions !== "boolean") throw httpError(400, "show_photo_captions must be true or false");
+    next.show_photo_captions = patch.show_photo_captions;
+  }
   if (patch.overnight_start !== undefined) {
     if (!isTimeKey(patch.overnight_start)) throw httpError(400, "overnight_start must be HH:MM");
     next.overnight_start = patch.overnight_start;

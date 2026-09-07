@@ -19,6 +19,7 @@
     nextButton: document.getElementById("nextButton"),
     weekStart: document.getElementById("weekStart"),
     slideshowSeconds: document.getElementById("slideshowSeconds"),
+    showPhotoCaptions: document.getElementById("showPhotoCaptions"),
     displayTitleInput: document.getElementById("displayTitleInput"),
     overnightEnabled: document.getElementById("overnightEnabled"),
     overnightStart: document.getElementById("overnightStart"),
@@ -150,6 +151,7 @@
     document.querySelectorAll("[data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === settings.view));
     dom.weekStart.value = settings.week_start;
     dom.slideshowSeconds.value = settings.slideshow_seconds;
+    dom.showPhotoCaptions.checked = Boolean(settings.show_photo_captions);
     dom.displayTitleInput.value = settings.display_title;
     dom.overnightEnabled.checked = settings.overnight_enabled;
     dom.overnightStart.value = settings.overnight_start;
@@ -292,6 +294,7 @@
       app.state = (await postJson("/api/state", {
         week_start: dom.weekStart.value,
         slideshow_seconds: Number(dom.slideshowSeconds.value),
+        show_photo_captions: dom.showPhotoCaptions.checked,
         display_title: dom.displayTitleInput.value,
         overnight_enabled: dom.overnightEnabled.checked,
         overnight_start: dom.overnightStart.value,
