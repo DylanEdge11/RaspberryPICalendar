@@ -102,7 +102,7 @@
       document.getElementById("weatherBody").textContent = weatherError || "Loading forecast…";
       return;
     }
-    const [icon, label] = conditions(data.current.weather_code);
+    const [icon, label] = conditions(data.current.display_weather_code ?? data.current.weather_code);
     const stale = data.stale || Boolean(weatherError);
     const theme = ({ Clear: 'sunny', 'Partly cloudy': 'partly', Overcast: 'cloudy', Fog: 'fog', Rain: 'rain', Snow: 'snow', Thunderstorms: 'storm' })[label] || 'cloudy';
     weatherButton.dataset.weather = theme;
