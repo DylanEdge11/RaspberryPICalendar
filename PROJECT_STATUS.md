@@ -7,11 +7,15 @@ Updated: 2026-09-06
 - Single Node.js service in `server.mjs`.
 - Built-in `node:sqlite`; one SQLite database under `APP_DATA_DIR`.
 - Plain static HTML/CSS/JS under `static/`; no frontend build step.
-- `sharp` is the only runtime package and is loaded optionally so demo display/testing can run without photo processing installed. Production photo uploads require it.
+- `sharp` is the only runtime package and is loaded optionally so the demo display can run without it. Photo-processing tests and uploads require `npm ci` first.
 - Persistent data is outside replaceable code: SQLite, original photos, resized display JPEGs, and Google token files.
 - Default timezone is `America/Regina`; production is intended to remain private to the home network.
 
 ## Completed
+
+- Google Photos Picker manual import: separate Photos OAuth using existing callback/client, phone selection/search, explicit import, progress, expiry/cancel/disconnect, pagination and persistent-ID duplicate skips. One connection and import at a time; 100-item batch, sequential bounded downloads through shared image pipeline. Local saved photos; no automatic album subscription. No database migration.
+- Photos verification: 15 tests pass with mocked Google responses plus real PNG upload/resize/duplicate/delete. Phone-sized rendering and selection/import flow checked with Playwright/headless Edge at 390×844, 412×915, and 1920×1080 (no horizontal overflow or JS errors). Live Google Photos consent/downloads on Pi, actual Safari/Android Chrome, and Pi memory under import remain untested.
+- Photos next setup: enable Google Photos Picker API and its selected-items scope; connect once on Pi at localhost/control, then select/import from phone. See README. Sessions/jobs are in memory; after restart select unfinished photos again. Completed files and duplicate IDs persist. Local Photos disconnect keeps imported files.
 
 - Calendar maintenance update: authenticated disconnect with local token/cache removal; reconnect reuses the primary calendar identity including legacy accounts; unchecked calendars are filtered from cached display results immediately. Existing duplicates require explicit removal. No schema migration.
 - Regression verification: syntax checks and 8 tests pass, including mocked reconnect/legacy identity, retained refresh token and selection, hidden-event filtering, disconnect isolation/cascade/token deletion, and unauthenticated DELETE rejection. New maintenance behaviour needs owner verification on the Pi with live Google.

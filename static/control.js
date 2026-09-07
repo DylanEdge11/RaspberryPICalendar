@@ -35,6 +35,59 @@
   };
 
   const app = { state: null, photos: [], google: { accounts: [], sources: [] } };
+  const photosUi = Object.fromEntries(["Connect", "Start", "Open", "Import", "Cancel", "Disconnect", "Status"].map((name) => [name, document.getElementById(`photos${name}`)]));
+  let photosTimer;
+  let photosProgress = "";
+
+  function renderPicker(state) {
+    const job = state.job;
+    const phase = job?.phase;
+    const active = ["selecting", "ready", "importing"].includes(phase);
+    photosUi.Connect.classList.toggle("hidden", state.demo || state.busy || active);
+    photosUi.Connect.textContent = state.connected ? "Reconnect Google Photos" : "Connect Google Photos";
+    photosUi.Start.classList.toggle("hidden", state.demo || !state.connected || active);
+    photosUi.Open.classList.toggle("hidden", phase !== "selecting");
+    if (job?.picker_url) photosUi.Open.href = job.picker_url;
+    else photosUi.Open.removeAttribute("href");
+    photosUi.Import.classList.toggle("hidden", phase !== "ready");
+    photosUi.Cancel.classList.toggle("hidden", !job || phase === "importing");
+    photosUi.Cancel.textContent = active ? "Cancel selection" : "Clear import status";
+    photosUi.Disconnect.classList.toggle("hidden", state.demo || !state.connected || active);
+    for (const name of ["Start", "Import", "Cancel", "Disconnect"]) photosUi[name].disabled = Boolean(state.busy);
+    let message = state.connected ? "Google Photos connected. You can choose photos from your phone." : "Google Photos is not connected yet.";
+    if (state.demo) message = "Google Photos is unavailable in demo mode. File uploads above still work.";
+    if (phase === "selecting") message = "Open Google Photos, search your album title, select photos and tap Done. Then return here.";
+    if (phase === "ready") message = "Selection ready. Tap Import selected photos to save copies on the Pi.";
+    if (job && !["selecting", "ready"].includes(phase)) message = `${phase === "importing" ? "Importing…" : phase === "complete" ? "Import finished." : "Import stopped."} ${job.imported} added, ${job.skipped} duplicates/videos skipped, ${job.failed} failed.`;
+    photosUi.Status.textContent = [message, ...(job?.messages || [])].join("\n");
+    const progress = `${job?.imported || 0}:${phase || ""}`;
+    if (progress !== photosProgress && job?.imported) loadPhotos().catch(() => {});
+    photosProgress = progress;
+    clearTimeout(photosTimer);
+    if ((active || state.busy) && !dom.controlsView.classList.contains("hidden")) photosTimer = setTimeout(() => pickerRequest(phase === "selecting" ? "check" : "status"), Math.max(2000, job?.poll_after_ms || 3000));
+  }
+
+  async function pickerRequest(action = "status") {
+    clearTimeout(photosTimer);
+    try {
+      const result = action === "status" ? await requestJson("/api/google-photos/status")
+        : action === "disconnect" ? await requestJson("/api/google-photos/connection", { method: "DELETE" })
+        : await postJson(`/api/google-photos/${action}`, {});
+      renderPicker(result);
+    } catch (error) {
+      photosUi.Status.textContent = error.message;
+      if (!dom.controlsView.classList.contains("hidden")) photosTimer = setTimeout(() => pickerRequest("status"), 30000);
+    }
+  }
+
+  for (const [name, action] of [["Start", "start"], ["Import", "import"], ["Cancel", "cancel"], ["Disconnect", "disconnect"]]) {
+    photosUi[name].addEventListener("click", async () => {
+      if (action === "disconnect" && !window.confirm("Disconnect Google Photos? Imported photos stay on the Pi. You can remove them using the photo list.")) return;
+      photosUi[name].disabled = true;
+      await pickerRequest(action);
+      photosUi[name].disabled = false;
+    });
+  }
 
   function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[character]));
@@ -72,6 +125,7 @@
   }
 
   function showLogin() {
+    clearTimeout(photosTimer);
     dom.loginView.classList.remove("hidden");
     dom.controlsView.classList.add("hidden");
     dom.logoutButton.classList.add("hidden");
@@ -207,6 +261,7 @@
       await loadState();
       await loadPhotos();
       await loadGoogle();
+      await pickerRequest();
     } catch (error) {
       dom.loginError.textContent = error.message;
     }
@@ -294,6 +349,7 @@
       renderState();
       await loadPhotos();
       await loadGoogle();
+      await pickerRequest();
     } catch (error) {
       dom.loginError.textContent = error.message;
       showLogin();

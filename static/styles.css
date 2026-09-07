@@ -21,6 +21,10 @@
 }
 
 * { box-sizing: border-box; }
+.photos-picker { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--line); }
+.picker-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.picker-actions > * { min-height: 44px; max-width: 100%; white-space: normal; text-align: center; }
+#photosStatus { white-space: pre-line; overflow-wrap: anywhere; }
 html, body { min-height: 100%; }
 body { margin: 0; color: var(--ink); background: var(--paper); }
 button, input, select { font: inherit; }

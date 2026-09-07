@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { URL, URLSearchParams } from "node:url";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import { createPhotosPicker } from "./photos-picker.mjs";
 
 const ROOT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const STATIC_DIR = path.join(ROOT_DIR, "static");
@@ -81,6 +82,8 @@ let sharp = null;
 try {
   const sharpModule = await import("sharp");
   sharp = sharpModule.default;
+  sharp.concurrency(1);
+  sharp.cache({ memory: 32, files: 0, items: 20 });
 } catch {
   // Photo uploads explain the missing optional runtime dependency to the caller.
 }
@@ -93,6 +96,27 @@ let syncInProgress = false;
 let accountMutationInProgress = false;
 let calendarRevision = 0;
 let uploadQueue = Promise.resolve();
+let photosConnecting = false;
+const PHOTOS_SCOPE = "https://www.googleapis.com/auth/photospicker.mediaitems.readonly";
+const pickerAccount = { token_path: path.join("secrets", "google-photos-picker.json") };
+const picker = createPhotosPicker({
+  connected: () => fs.existsSync(safeDataPath(pickerAccount.token_path)),
+  accessToken: async () => {
+    try { return await getAccessToken(pickerAccount); }
+    catch { throw httpError(401, "Google Photos access expired. Reconnect Google Photos on the Pi."); }
+  },
+  api: async (url, options) => {
+    try { return await googleJsonForAccount(pickerAccount, url, options); }
+    catch (error) {
+      if ([404, 410].includes(error.statusCode)) throw httpError(410, "Google Photos selection expired. Start a new selection.");
+      if (error.statusCode === 403) throw httpError(403, "Enable Google Photos Picker API in Google Cloud and connect Google Photos again if permission expired.");
+      throw httpError(502, "Google Photos could not be reached or its connection expired. Retry, or reconnect Google Photos on the Pi.");
+    }
+  },
+  withSlot: withUploadSlot,
+  hasPhoto: (id) => Boolean(db.prepare("SELECT id FROM photos WHERE id=?").get(id)),
+  savePhoto: (data, filename, id) => processPhotoPart({ data, filename }, id)
+});
 
 function clampInteger(value, min, max) {
   const number = Number.parseInt(value, 10);
@@ -593,6 +617,12 @@ async function processPhotoRequest(req) {
   const body = await readRequestBody(req, MAX_UPLOAD_BYTES);
   const part = parseMultipart(body, req.headers["content-type"] || "").find((candidate) => candidate.filename && candidate.data.length);
   if (!part) throw httpError(400, "Choose an image file to upload");
+  return processPhotoPart(part);
+}
+
+async function processPhotoPart(part, photoId = null) {
+  if (!sharp) throw httpError(503, "Photo processing is unavailable. Install the application dependencies first.");
+  if (part.data.length > MAX_UPLOAD_BYTES) throw httpError(413, "Photo exceeds the 20 MB limit");
   const sniffedMime = sniffImage(part.data);
   if (!sniffedMime) throw httpError(415, "Unsupported image format. Use JPEG, PNG, GIF, WebP, or a HEIC file supported by this Pi build.");
   const sha256 = createHash("sha256").update(part.data).digest("hex");
@@ -601,7 +631,7 @@ async function processPhotoRequest(req) {
   if (Number(totals.count) >= MAX_PHOTOS) throw httpError(507, `The family display is limited to ${MAX_PHOTOS} photos`);
   if (Number(totals.bytes) + part.data.length > MAX_PHOTO_STORAGE_BYTES) throw httpError(507, "The family photo storage limit has been reached; remove an older photo first");
 
-  const id = `photo_${Date.now().toString(36)}_${randomBytes(5).toString("hex")}`;
+  const id = photoId || `photo_${Date.now().toString(36)}_${randomBytes(5).toString("hex")}`;
   const originalExtension = extensionForMime(sniffedMime, part.filename);
   const originalRelative = path.join("photos", "original", `${id}.${originalExtension}`);
   const displayRelative = path.join("photos", "display", `${id}.jpg`);
@@ -758,7 +788,7 @@ function redirectUri(req) {
   throw httpError(503, "Set GOOGLE_REDIRECT_URI. Use an exact HTTPS callback on an owned host, or start the OAuth flow from the Pi itself with http://localhost.");
 }
 
-function googleAuthorizeUrl(req, state) {
+function googleAuthorizeUrl(req, state, scope = "https://www.googleapis.com/auth/calendar.readonly") {
   const client = readClientSecrets();
   const params = new URLSearchParams({
     client_id: client.clientId,
@@ -766,7 +796,7 @@ function googleAuthorizeUrl(req, state) {
     response_type: "code",
     access_type: "offline",
     prompt: "consent",
-    scope: "https://www.googleapis.com/auth/calendar.readonly",
+    scope,
     state
   });
   return `${client.authUri}?${params}`;
@@ -1125,6 +1155,38 @@ async function handleRequest(req, res) {
     return sendJson(res, 200, { ok: true });
   }
 
+  if (url.pathname.startsWith("/api/google-photos/")) {
+    const session = requireAdmin(req);
+    const action = url.pathname.slice("/api/google-photos/".length);
+    if (method === "GET" && action === "status") return sendJson(res, 200, { ...picker.status(), demo: APP_MODE === "demo" });
+    if (APP_MODE === "demo") throw httpError(409, "Google Photos import is disabled in demo mode. Phone file uploads still work.");
+    if (photosConnecting) throw httpError(409, "Google Photos connection is being updated. Try again in a moment.");
+    if (method === "GET" && action === "connect") {
+      picker.ensureIdle();
+      const callback = new URL(redirectUri(req));
+      if (req.headers.host !== callback.host) return sendText(res, 400, "For initial Google Photos setup, open the control page on the Pi at the same address as GOOGLE_REDIRECT_URI (normally http://localhost:8080/control), enter your PIN, and connect there. Later imports work from your phone.");
+      const state = randomBytes(24).toString("base64url");
+      const location = googleAuthorizeUrl(req, state, PHOTOS_SCOPE);
+      oauthStates.set(state, { createdAt: Date.now(), sessionToken: session.token, purpose: "photos" });
+      return redirect(res, location);
+    }
+    if (method === "POST" && action === "start") {
+      if (!sharp) throw httpError(503, "Install the application dependencies before importing photos.");
+      return sendJson(res, 200, await picker.start());
+    }
+    if (method === "POST" && action === "check") return sendJson(res, 200, await picker.check());
+    if (method === "POST" && action === "import") return sendJson(res, 202, picker.importSelected());
+    if (method === "POST" && action === "cancel") return sendJson(res, 200, await picker.cancel());
+    if (method === "DELETE" && action === "connection") {
+      photosConnecting = true;
+      try {
+        await picker.cancel();
+        fs.rmSync(safeDataPath(pickerAccount.token_path), { force: true });
+      } finally { photosConnecting = false; }
+      return sendJson(res, 200, picker.status());
+    }
+  }
+
   if (method === "GET" && url.pathname === "/api/google/start") {
     const session = requireAdmin(req);
     const state = randomBytes(24).toString("base64url");
@@ -1139,6 +1201,19 @@ async function handleRequest(req, res) {
     if (!savedState || savedState.createdAt + OAUTH_STATE_TTL_MS < Date.now()) return sendText(res, 400, "This Google pairing link expired. Return to the control page and try again.");
     if (sessionFromRequest(req)?.token !== savedState.sessionToken) return sendText(res, 403, "This Google pairing must be completed in the same paired browser.");
     if (!code) return sendText(res, 400, "Google authorization was not completed. Return to the control page and try again.");
+    if (savedState.purpose === "photos") {
+      picker.ensureIdle();
+      if (photosConnecting) throw httpError(409, "Google Photos connection is already being updated.");
+      photosConnecting = true;
+      try {
+        const token = await exchangeGoogleCode(req, code);
+        if (!token.scope?.split(" ").includes(PHOTOS_SCOPE)) throw httpError(403, "Google Photos permission was not granted. Connect again and allow access to selected photos.");
+        if (!token.refresh_token) throw httpError(403, "Google did not provide ongoing access. Remove this app's Photos access in Google Account settings, then connect again.");
+        await picker.cancel();
+        writePrivateJson(safeDataPath(pickerAccount.token_path), token);
+      } finally { photosConnecting = false; }
+      return redirect(res, "/control?photos=connected");
+    }
     if (syncInProgress || accountMutationInProgress) throw httpError(409, "Calendar sync is running. Wait a moment, then start Google connection again.");
     accountMutationInProgress = true;
     try {

@@ -82,6 +82,21 @@
               <p class="save-message" id="uploadMessage" role="status"></p>
             </form>
             <div class="photo-list" id="photoList"></div>
+            <div class="photos-picker" id="photosPicker">
+              <h3>Import from Google Photos</h3>
+              <p class="muted-copy">Search for your album by name, select up to 100 photos, then import them here. Display-sized copies stay on this Pi until you remove them. New album additions are not imported automatically. Videos are skipped.</p>
+              <p class="muted-copy">Anyone paired with this household display can start an import. In Google Photos, sign in with the same account connected below. Only your selected photos are downloaded; Google passwords and tokens are never sent to this page.</p>
+              <p class="form-note">First-time setup: enable Google Photos Picker API in Google Cloud, then open http://localhost:8080/control in Chromium on the Pi and connect below. After setup, use these controls from your phone.</p>
+              <div class="picker-actions">
+                <a class="secondary-button" id="photosConnect" href="/api/google-photos/connect">Connect Google Photos</a>
+                <button class="secondary-button hidden" id="photosStart" type="button">Choose from Google Photos</button>
+                <a class="primary-button hidden" id="photosOpen" target="_blank" rel="noopener noreferrer">Open Google Photos selection</a>
+                <button class="primary-button hidden" id="photosImport" type="button">Import selected photos</button>
+                <button class="secondary-button hidden" id="photosCancel" type="button">Cancel selection</button>
+                <button class="text-button hidden" id="photosDisconnect" type="button">Disconnect Google Photos</button>
+              </div>
+              <p id="photosStatus" class="save-message" role="status" aria-live="polite"></p>
+            </div>
           </section>
 
           <section class="surface-card control-card google-card">

@@ -214,11 +214,32 @@ Supported inputs are JPEG, PNG, GIF, WebP, AVIF, and HEIC/HEIF only when the Pi'
 
 iPhone users should try HEIC first after installing the Pi dependencies. If the installed ARM image stack cannot decode it, the control page returns a clear error; export/share as JPEG or PNG rather than assuming every iPhone photo is JPEG. Existing uploaded photos are local and continue cycling without internet access.
 
-## Google Photos decision (researched 2026-09-06)
+## Google Photos import (optional)
 
 Google changed the Photos APIs in 2025. The Library API now focuses on content created by the app, and the old broad `photoslibrary.readonly`/sharing scopes are no longer the dependable way to enumerate a user's existing daily album. The supported Picker API lets a user explicitly select photos from their library, but it is an interactive selection flow with a session, not a silent “watch this album forever” feed. Google also says picked media URLs are temporary and should not be cached as a permanent source.
 
-That makes a background sync of the household's existing Google Photos album a poor dependency for this private frame. The first version therefore uses wireless phone upload. A future optional Picker import could be added after the core build is stable; it would require an explicit selection on the phone and downloading the selected media into the Pi's own photo store. Fragile scraping, public-album exposure, and repeated manual credential extraction are deliberately out of scope.
+**Import from Google Photos** is implemented in phone controls using the Picker API. It imports selected photos rather than subscribing to an album. Search by album title in Google's picker, then select photos; one-click whole-album selection is not promised. Google's Ambient API requires partner acceptance and is not used here.
+
+One-time setup:
+
+1. In the same Google Cloud project as Calendar, enable **Google Photos Picker API**.
+2. In **Google Auth Platform → Data Access**, add `https://www.googleapis.com/auth/photospicker.mediaitems.readonly`. Keep the Calendar permission. If the project is in Testing, add the Photos account as a test user.
+3. Keep the existing web client JSON and `GOOGLE_REDIRECT_URI=http://localhost:8080/api/google/callback`; no new redirect or environment variable is needed.
+4. On the Pi, open `http://localhost:8080/control` in Chromium, enter the PIN, and click **Connect Google Photos**. Grant the selected-photos permission. This separate connection does not add a Calendar account.
+
+Regular phone imports:
+
+1. Open the Pi controls on home Wi-Fi and click **Choose from Google Photos**, then **Open Google Photos selection**.
+2. Sign in with the same Photos account authorized on the Pi. Search the album title, select photos, and tap **Done**.
+3. Return to the controls tab and click **Import selected photos** when ready. The Pi downloads and saves the photos; the phone can sleep after import starts.
+
+Limits and privacy: one shared household Photos connection and import at a time, up to 100 selections per batch; videos skipped. Photos are requested at up to 1920×1080 with a 20 MB download limit, existing decoded-pixel/storage quotas, and serialized image processing. Imported files are display-sized copies rather than an archive of camera originals. Repeated Google media IDs are skipped even after restart; exact byte duplicates are also rejected. Photos remain on the Pi and cycle offline. Temporary Google URLs are not used as permanent slideshow URLs. Copies are visible on the private LAN like ordinary uploads; never expose this service publicly.
+
+The separate refresh token is stored at `APP_DATA_DIR/secrets/google-photos-picker.json`, covered by existing private permissions/backups. Paired household controls can initiate imports. **Disconnect Google Photos** removes the local connection; imported copies stay until removed from the photo list. Google photos are never deleted. No extra subscription or automatic album watch. Testing-mode access can expire after seven days; reconnect on the Pi when required.
+
+Selection sessions/progress are in memory. If the Pi restarts during a selection/import, saved photos remain; select the unfinished batch again and duplicates will be skipped. Expired selections can be cancelled/replaced. Failed Google session cleanup is reported and Google eventually expires it. No database migration; rollback to the prior commit preserves household data.
+
+Verification: mocked Google session/import tests and real local image-processing tests pass. Controls and the simulated import flow were inspected in headless Edge at 390×844, 412×915 and 1920×1080 without page errors or horizontal overflow. Live Photos consent/import, actual mobile browsers and Pi import memory require owner verification.
 
 Primary references: [Google Calendar Node.js quickstart](https://developers.google.com/workspace/calendar/api/quickstart/nodejs), [Calendar events.list](https://developers.google.com/calendar/api/v3/reference/events/list), [Google OAuth web-server flow](https://developers.google.com/identity/protocols/oauth2/web-server), [Google Photos API updates](https://developers.google.com/photos/support/updates), [Photos Picker API](https://developers.google.com/photos/picker/guides/sessions), and [Photos Library listing guidance](https://developers.google.com/photos/library/guides/list).
 

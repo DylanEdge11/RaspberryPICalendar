@@ -77,6 +77,9 @@ after(async () => {
 });
 
 test("management state is protected and phone view changes are persisted", async () => {
+  for (const [method, route] of [["GET", "status"], ["GET", "connect"], ["POST", "start"], ["POST", "check"], ["POST", "import"], ["POST", "cancel"], ["DELETE", "connection"]]) {
+    assert.equal((await fetch(`${baseUrl}/api/google-photos/${route}`, { method, redirect: "manual" })).status, 401);
+  }
   const deniedDelete = await fetch(`${baseUrl}/api/google/accounts/anything`, { method: "DELETE" });
   assert.equal(deniedDelete.status, 401);
   const unauthenticated = await fetch(`${baseUrl}/api/state`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ view: "month" }) });
@@ -86,6 +89,7 @@ test("management state is protected and phone view changes are persisted", async
   assert.equal(login.status, 200);
   assert.match(login.headers.get("set-cookie"), /SameSite=Lax/);
   cookie = login.headers.get("set-cookie").split(";", 1)[0];
+  assert.equal((await fetch(`${baseUrl}/api/google-photos/start`, { method: "POST", headers: { Cookie: cookie } })).status, 409, "demo never calls Google");
 
   const changed = await fetch(`${baseUrl}/api/state`, { method: "POST", headers: { "Content-Type": "application/json", Cookie: cookie }, body: JSON.stringify({ view: "month" }) });
   assert.equal(changed.status, 200);
@@ -150,6 +154,31 @@ test("event API returns the requested range and no live account claim in demo mo
   assert.equal(events.range.start, state.period.start);
   assert.ok(Array.isArray(events.events));
   assert.ok(events.events.every((event) => event.calendar_color.startsWith("#")));
+});
+
+test("shared photo processing accepts PNG, rejects duplicates, serves JPEG and removes the photo", async () => {
+  const sharp = (await import("sharp")).default;
+  const data = await sharp({ create: { width: 8, height: 6, channels: 3, background: "#123456" } }).png().toBuffer();
+  const login = await fetch(`${baseUrl}/api/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pin: "1234" }) });
+  const photoCookie = login.headers.get("set-cookie").split(";", 1)[0];
+  const upload = async () => {
+    const form = new FormData();
+    form.append("photo", new Blob([data], { type: "image/png" }), "test-photo.png");
+    return fetch(`${baseUrl}/api/photos`, { method: "POST", headers: { Cookie: photoCookie }, body: form });
+  };
+  const response = await upload();
+  assert.equal(response.status, 201);
+  const { photo } = await response.json();
+  try {
+    assert.equal((await upload()).status, 409);
+    const displayed = await fetch(`${baseUrl}${photo.url}`);
+    assert.equal(displayed.status, 200);
+    assert.equal(displayed.headers.get("content-type"), "image/jpeg");
+    const metadata = await sharp(Buffer.from(await displayed.arrayBuffer())).metadata();
+    assert.equal(metadata.width, 8);
+  } finally {
+    assert.equal((await fetch(`${baseUrl}/api/photos/${photo.id}`, { method: "DELETE", headers: { Cookie: photoCookie } })).status, 200);
+  }
 });
 
 test("production mode does not fall back to demo events without a Google account", async () => {
