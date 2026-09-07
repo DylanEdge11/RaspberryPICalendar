@@ -373,3 +373,26 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--teal); outline-
 .weather-table th, .weather-table td { padding: 12px 8px; text-align: left; border-bottom: 1px solid #dbe5e5; }
 .weather-credit { font-size: 13px; }
 #weatherCity { width: min(220px, 45vw); }
+
+/* Keep weather below a slightly shorter album in the right column. */
+.album-weather-column { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: clamp(10px, 1.3vw, 20px); }
+.album-weather-column .weather-widget { width: 100%; min-height: 84px; padding: 18px 14px; white-space: normal; overflow-wrap: anywhere; }
+#openAlbum { cursor: pointer; }
+#openAlbum:focus-visible { outline: 3px solid var(--teal); outline-offset: -3px; }
+#albumDialog { position: fixed; inset: 0; width: 100vw; max-width: none; height: 100vh; height: 100dvh; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0; overflow: hidden; background: #080c10; color: white; }
+#albumDialog::backdrop { background: #080c10; }
+#albumImage { width: 100%; height: 100%; object-fit: contain; }
+#albumImage[hidden] { display: none; }
+.album-actions { position: absolute; top: 18px; right: 18px; left: 18px; display: flex; justify-content: space-between; gap: 16px; }
+.album-actions button { min-height: 48px; padding: 10px 18px; border: 1px solid #ffffff66; border-radius: 24px; background: #101820cc; color: white; font: inherit; cursor: pointer; }
+.album-actions #closeAlbum { width: 48px; padding: 0; font-size: 30px; }
+#albumEmpty { position: absolute; top: 45%; width: 100%; padding: 24px; text-align: center; }
+#albumDemoLabel { position: absolute; bottom: 18px; left: 18px; padding: 8px 12px; border-radius: 8px; background: #101820cc; }
+@media (orientation: portrait) {
+  .album-weather-column { grid-template-columns: minmax(0, 1fr) minmax(110px, 0.55fr); grid-template-rows: minmax(0, 1fr); gap: 10px; }
+  .album-weather-column .weather-widget { min-height: 0; padding: 10px; }
+}
+@media (max-height: 600px) and (orientation: landscape) {
+  .album-weather-column { gap: 8px; }
+  .album-weather-column .weather-widget { min-height: 54px; padding: 10px; }
+}

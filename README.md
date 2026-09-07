@@ -345,6 +345,8 @@ Verified in the development browser: week and month at 1024×600, and month at 8
 
 ## Weather widget
 
-The display header shows current weather in Celsius (Regina by default). In phone Controls, set **Weather location** to a city, optionally followed by its province or country, and choose **Hourly today** or **Next 7 days**, then save settings. Tap the weather widget to open that forecast; Close or Escape returns to the calendar. Forecast times use the selected location’s timezone and always follow today, independently of calendar navigation.
+The bottom-right widget below the Family Album shows current weather in Celsius (Regina by default). In phone Controls, set **Weather location** to a city, optionally followed by its province or country, and choose **Hourly today** or **Next 7 days**, then save settings. Tap the weather widget to open that forecast; Close or Escape returns to the calendar. Forecast times use the selected location’s timezone and always follow today, independently of calendar navigation.
 
 Weather uses [Open-Meteo](https://open-meteo.com/) forecast and geocoding APIs without an API key. The Pi needs outbound HTTPS access to api.open-meteo.com and geocoding-api.open-meteo.com. Forecasts are cached in memory for 15 minutes; temporary failures show the last successful forecast with an out-of-date label. After a restart without internet, weather shows unavailable until connectivity returns. City searches use the first matching location; the forecast window shows its full resolved name so you can refine ambiguous searches.
+
+Click the Family Album to open a full-screen slideshow. Pictures use the saved photo timing and fit inside the screen without cropping. Use **×**, **Back to calendar**, or Escape to return to the calendar.

@@ -19,7 +19,6 @@
         </div>
         <div class="topbar-status">
           <span class="status-pill" id="syncStatus"><span class="status-dot"></span>Loading calendar</span>
-          <button type="button" class="weather-widget" id="weatherWidget" aria-haspopup="dialog">☁ Weather loading…</button>
           <span class="clock" id="clock" aria-label="Current time"></span>
           <a class="icon-link controls-link" href="/control" target="_blank" rel="noopener" aria-label="Open Controls in a separate tab">Controls</a>
         </div>
@@ -40,7 +39,8 @@
           </div>
         </section>
 
-        <aside class="photo-card surface-card" aria-label="Family photos">
+        <aside class="album-weather-column" aria-label="Family album and weather">
+        <div class="photo-card surface-card" id="openAlbum" role="button" tabindex="0" aria-haspopup="dialog" aria-label="Open Family Album slideshow">
           <div class="photo-header">
             <div>
               <p class="section-kicker">FAMILY ALBUM</p>
@@ -59,6 +59,8 @@
             </div>
           </div>
           <p class="photo-note" id="photoNote">Photos stay on this Pi and keep cycling if the internet goes away.</p>
+        </div>
+        <button type="button" class="weather-widget surface-card" id="weatherWidget" aria-haspopup="dialog">☁ Weather loading…</button>
         </aside>
       </section>
 
@@ -68,6 +70,12 @@
       </footer>
     </main>
 
+    <dialog id="albumDialog" aria-label="Family Album slideshow">
+      <img id="albumImage" alt="Family photo">
+      <p id="albumEmpty" hidden>No photos yet. Add photos from the phone controls.</p>
+      <span id="albumDemoLabel" hidden>Sample image · demo</span>
+      <div class="album-actions"><button type="button" id="backToCalendar">← Back to calendar</button><button type="button" id="closeAlbum" aria-label="Close slideshow" autofocus>×</button></div>
+    </dialog>
     <dialog id="eventDialog" aria-labelledby="detailTitle">
       <div class="detail-heading"><h2 id="detailTitle">Event details</h2><button type="button" class="secondary-button" id="closeDetails" autofocus>Close</button></div>
       <div id="detailBody"></div>

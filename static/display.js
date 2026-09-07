@@ -414,7 +414,34 @@
     dom.photoCaptionBar.classList.toggle("hidden", !photo?.demo && !app.state?.settings?.show_photo_captions);
   }
 
+  const albumDialog = document.getElementById("albumDialog");
+  const albumImage = document.getElementById("albumImage");
+  const albumTrigger = document.getElementById("openAlbum");
+  function renderAlbum() {
+    if (!albumDialog.open) return;
+    const photo = app.photos[app.photoIndex % app.photos.length];
+    document.getElementById("albumEmpty").hidden = Boolean(photo);
+    document.getElementById("albumDemoLabel").hidden = !photo?.demo;
+    albumImage.hidden = !photo;
+    if (!photo) { albumImage.removeAttribute("src"); return; }
+    albumImage.alt = photo.original_name || "Family photo";
+    albumImage.src = photo.url + (photo.demo ? "" : "?v=" + encodeURIComponent(photo.created_at || ""));
+  }
+  function openAlbum() {
+    if (!albumDialog.open) albumDialog.showModal();
+    renderAlbum();
+  }
+  albumTrigger.addEventListener("click", openAlbum);
+  albumTrigger.addEventListener("keydown", event => {
+    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openAlbum(); }
+  });
+  for (const id of ["closeAlbum", "backToCalendar"]) {
+    document.getElementById(id).addEventListener("click", () => albumDialog.close());
+  }
+  albumDialog.addEventListener("close", () => albumTrigger.focus());
+
   function renderPhoto() {
+    renderAlbum();
     updatePhotoCaptionVisibility();
     const count = app.photos.length;
     dom.photoCount.textContent = count ? `${String(count).padStart(2, "0")}` : "—";
@@ -484,7 +511,10 @@
         const changedSlideshow = !app.state || app.state.settings.slideshow_seconds !== next.settings.slideshow_seconds;
         const changedCalendar = !app.state || syncKey(app.state) !== syncKey(next);
         const changedPhotos = !app.state || app.state.photo_count !== next.photo_count;
+        const changedWeather = app.state?.settings.weather_city !== next.settings.weather_city;
         app.state = next;
+        if (changedWeather) loadWeather();
+        else renderWeather();
         renderChrome();
         if (changedPeriod || changedCalendar) await loadEvents();
         if (changedPhotos) await loadPhotos();
