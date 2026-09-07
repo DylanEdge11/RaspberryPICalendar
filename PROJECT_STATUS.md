@@ -13,6 +13,10 @@ Updated: 2026-09-06
 
 ## Completed
 
+- Calendar maintenance update: authenticated disconnect with local token/cache removal; reconnect reuses the primary calendar identity including legacy accounts; unchecked calendars are filtered from cached display results immediately. Existing duplicates require explicit removal. No schema migration.
+- Regression verification: syntax checks and 8 tests pass, including mocked reconnect/legacy identity, retained refresh token and selection, hidden-event filtering, disconnect isolation/cascade/token deletion, and unauthenticated DELETE rejection. New maintenance behaviour needs owner verification on the Pi with live Google.
+- Owner confirms Pi service, phone controls and live Google syncing work. GitHub origin is configured at DylanEdge11/RaspberryPICalendar. Reboot/kiosk and backup/restore remain pending.
+
 - Milestone 1 visual prototype: polished landscape week view, six-week month view, calendar color legend, today marker, overlapping event lanes, all-day/multi-day handling in the display model, rotating local demo images, clear demo-mode labeling, and responsive control page.
 - Phone-to-display state changes through SSE with polling fallback; state persists in SQLite.
 - Settings for week start, view, anchor period, slideshow seconds, title, and overnight dimming. Overnight dimming intentionally does not power off the monitor.
@@ -54,7 +58,7 @@ The valid-image upload path was exercised with a PNG after installing the locked
 - No real Google credentials, Pi hardware, monitor resolution, or Nest speaker is available in this workspace, so those paths are documented but not claimed tested.
 - Pi information verified by the owner: `aarch64` architecture, 64-bit userspace, Linux/Debian 13 (Trixie), Chromium 152.9.7977.75, Node.js `v22.23.2`, npm `10.9.3`, approximately 1.4 GiB available memory, 1.8 GiB zram swap, and approximately 105 GB available storage. Desktop/session configuration and application performance remain unverified.
 - The kiosk service, Pi architecture-specific install, and real monitor sizing remain unverified; use the documented user-session/autostart fallback if the system service starts before the desktop session.
-- The first private GitHub commit and remote still need to be created before rollback/update instructions can be used.
+- Screenshot attachments are excluded from future commits; previously committed attachments can remain in Git history.
 - `sharp` support for HEIC depends on the ARM/libvips build installed on the Pi; the app reports a clear failure rather than silently treating HEIC as JPEG.
 - Google OAuth currently stores refresh tokens as permission-protected JSON under the Pi data directory; protect the OS account and backups. The service is not intended for public exposure.
 - There is no voice-controlled screen switching in this release; the phone controls are the fallback. Research found no direct arbitrary-HTTP action in the current Google Home automation action list. Home Assistant is a possible future bridge but adds a service, Google account-linking/SSL or a paid cloud option, and Pi resource risk.

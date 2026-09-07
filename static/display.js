@@ -97,7 +97,7 @@
 
   function syncKey(state) {
     const calendar = state?.calendar || {};
-    return `${calendar.last_success_at || ""}:${calendar.error || ""}:${calendar.stale ? "stale" : "fresh"}`;
+    return `${calendar.revision || 0}:${calendar.last_success_at || ""}:${calendar.error || ""}:${calendar.stale ? "stale" : "fresh"}`;
   }
 
   async function requestJson(url, options) {

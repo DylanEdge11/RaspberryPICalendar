@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, access, readFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import os from "node:os";
 import path from "node:path";
 import { once } from "node:events";
@@ -76,11 +77,14 @@ after(async () => {
 });
 
 test("management state is protected and phone view changes are persisted", async () => {
+  const deniedDelete = await fetch(`${baseUrl}/api/google/accounts/anything`, { method: "DELETE" });
+  assert.equal(deniedDelete.status, 401);
   const unauthenticated = await fetch(`${baseUrl}/api/state`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ view: "month" }) });
   assert.equal(unauthenticated.status, 401);
 
   const login = await fetch(`${baseUrl}/api/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pin: "1234" }) });
   assert.equal(login.status, 200);
+  assert.match(login.headers.get("set-cookie"), /SameSite=Lax/);
   cookie = login.headers.get("set-cookie").split(";", 1)[0];
 
   const changed = await fetch(`${baseUrl}/api/state`, { method: "POST", headers: { "Content-Type": "application/json", Cookie: cookie }, body: JSON.stringify({ view: "month" }) });
@@ -96,6 +100,47 @@ test("management state is protected and phone view changes are persisted", async
   assert.equal(seeded.status, 200);
   const previousMonth = await fetch(`${baseUrl}/api/state`, { method: "POST", headers: { "Content-Type": "application/json", Cookie: cookie }, body: JSON.stringify({ action: "navigate", direction: "previous" }) });
   assert.equal((await previousMonth.json()).state.settings.anchor_date, "2026-02-28");
+});
+
+test("reconnecting preserves selection; hidden events stay cached; disconnect removes only its account", async () => {
+  const database = new DatabaseSync(path.join(testDataDir, "calendar.sqlite"));
+  const originalFetch = globalThis.fetch;
+  let identity = "one@example.test";
+  globalThis.fetch = async (url) => {
+    assert.equal(String(url), "https://www.googleapis.com/calendar/v3/calendars/primary");
+    return new Response(JSON.stringify({ id: identity }), { status: 200 });
+  };
+  try {
+    const token = { access_token: "test-access", refresh_token: "test-refresh", expires_at: Date.now() + 3600000 };
+    const first = await app.saveGoogleConnection(token);
+    database.prepare(`INSERT INTO calendar_sources(id, account_id, calendar_id, summary, enabled, updated_at)
+      VALUES('source-one', ?, 'calendar-one', 'Test calendar', 1, '2026-09-01')`).run(first.id);
+    database.prepare(`INSERT INTO calendar_events(account_id, calendar_id, event_id, title, all_day, start_date, end_date, updated_at)
+      VALUES(?, 'calendar-one', 'event-one', 'Test event', 1, '2026-09-07', '2026-09-08', '2026-09-01')`).run(first.id);
+    assert.equal(app.getCachedEvents("2026-09-07", "2026-09-14").length, 1);
+    database.prepare("UPDATE calendar_sources SET enabled=0 WHERE account_id=?").run(first.id);
+    assert.equal(app.getCachedEvents("2026-09-07", "2026-09-14").length, 0);
+    assert.equal(database.prepare("SELECT COUNT(*) AS n FROM calendar_events").get().n, 1);
+    const again = await app.saveGoogleConnection({ access_token: "renewed", expires_at: token.expires_at });
+    assert.equal(again.id, first.id);
+    assert.equal(database.prepare("SELECT enabled FROM calendar_sources").get().enabled, 0);
+    assert.equal(JSON.parse(await readFile(path.join(testDataDir, first.token_path))).refresh_token, "test-refresh");
+    database.prepare("UPDATE google_accounts SET email=NULL WHERE id=?").run(first.id);
+    assert.equal((await app.saveGoogleConnection(token)).id, first.id, "legacy connection is reused");
+    identity = "two@example.test";
+    const second = await app.saveGoogleConnection(token);
+    assert.notEqual(second.id, first.id);
+    app.disconnectGoogleAccount(first.id);
+    assert.equal(database.prepare("SELECT COUNT(*) AS n FROM calendar_events").get().n, 0);
+    assert.equal(database.prepare("SELECT COUNT(*) AS n FROM calendar_sources").get().n, 0);
+    assert.equal(database.prepare("SELECT COUNT(*) AS n FROM google_accounts").get().n, 1);
+    await assert.rejects(access(path.join(testDataDir, first.token_path)));
+    await access(path.join(testDataDir, second.token_path));
+    app.disconnectGoogleAccount(second.id);
+  } finally {
+    globalThis.fetch = originalFetch;
+    database.close();
+  }
 });
 
 test("event API returns the requested range and no live account claim in demo mode", async () => {

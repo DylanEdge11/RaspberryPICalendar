@@ -164,13 +164,26 @@
     dom.googleAccountList.innerHTML = app.google.accounts.map((account) => {
       const sources = app.google.sources.filter((source) => source.account_id === account.id);
       const sourceHtml = sources.length ? `<div class="calendar-source-list">${sources.map((source) => `<label class="calendar-source"><input type="checkbox" data-source-id="${escapeHtml(source.id)}" ${source.enabled ? "checked" : ""}><span class="calendar-source-dot" style="--source-color:${/^#[0-9a-f]{6}$/i.test(source.color || "") ? source.color : "#6d7bea"}"></span><span>${escapeHtml(source.summary)}</span></label>`).join("")}</div>` : `<small>No readable calendars returned yet.</small>`;
-      return `<div class="google-account"><strong>${escapeHtml(account.label)}${account.email ? ` · ${escapeHtml(account.email)}` : ""}</strong>${account.last_error ? `<small class="form-error">${escapeHtml(account.last_error)}</small>` : ""}${sourceHtml}</div>`;
+      return `<div class="google-account"><strong>${escapeHtml(account.label)}</strong><small>Connected ${escapeHtml(new Date(account.created_at).toLocaleString())}</small>${account.last_error ? `<small class="form-error">${escapeHtml(account.last_error)}</small>` : ""}${sourceHtml}<button type="button" class="secondary-button" data-disconnect-id="${escapeHtml(account.id)}">Disconnect account</button></div>`;
     }).join("");
     dom.googleAccountList.querySelectorAll("[data-source-id]").forEach((input) => input.addEventListener("change", saveGoogleSources));
+    dom.googleAccountList.querySelectorAll("[data-disconnect-id]").forEach((button) => button.addEventListener("click", async () => {
+      if (!window.confirm("Remove this connection and its events from this display? Your Google calendars will not be deleted. Other connections remain connected.")) return;
+      button.disabled = true;
+      try {
+        await requestJson(`/api/google/accounts/${encodeURIComponent(button.dataset.disconnectId)}`, { method: "DELETE" });
+        await loadGoogle();
+        await loadState();
+      } catch (error) {
+        setMessage(dom.settingsMessage, error.message, true);
+        button.disabled = false;
+      }
+    }));
   }
 
   async function saveGoogleSources() {
     const sources = [...dom.googleAccountList.querySelectorAll("[data-source-id]")].map((input) => ({ id: input.dataset.sourceId, enabled: input.checked }));
+    dom.googleAccountList.querySelectorAll("input, button").forEach((input) => { input.disabled = true; });
     try {
       dom.googleSyncButton.disabled = true;
       await postJson("/api/google/sources", { sources });
@@ -180,6 +193,7 @@
       setMessage(dom.settingsMessage, error.message, true);
     } finally {
       dom.googleSyncButton.disabled = false;
+      dom.googleAccountList.querySelectorAll("input, button").forEach((input) => { input.disabled = false; });
     }
   }
 

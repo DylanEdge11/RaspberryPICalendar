@@ -90,6 +90,8 @@ const oauthStates = new Map();
 const loginAttempts = new Map();
 const updateClients = new Set();
 let syncInProgress = false;
+let accountMutationInProgress = false;
+let calendarRevision = 0;
 let uploadQueue = Promise.resolve();
 
 function clampInteger(value, min, max) {
@@ -383,7 +385,7 @@ function getStatePayload() {
     today: todayKey(),
     settings,
     period: getPeriodInfo(settings),
-    calendar: getSyncStatus(),
+    calendar: { ...getSyncStatus(), revision: calendarRevision },
     photo_count: getPhotos().length,
     server_time: new Date().toISOString()
   };
@@ -696,8 +698,8 @@ function getCachedEvents(start, end) {
     SELECT e.*, s.summary AS calendar_summary, s.color AS source_color
     FROM calendar_events e
     LEFT JOIN calendar_sources s ON s.account_id = e.account_id AND s.calendar_id = e.calendar_id
-    WHERE (e.all_day = 1 AND e.start_date < ? AND e.end_date > ?)
-       OR (e.all_day = 0 AND e.end_ms > ? AND e.start_ms < ?)
+    WHERE s.enabled = 1 AND ((e.all_day = 1 AND e.start_date < ? AND e.end_date > ?)
+       OR (e.all_day = 0 AND e.end_ms > ? AND e.start_ms < ?))
     ORDER BY e.start_date, e.start_local, e.title
   `).all(end, start, rangeStartMs, rangeEndMs);
   return rows.map((row) => ({
@@ -813,6 +815,46 @@ function readToken(account) {
   } catch {
     throw httpError(500, "A stored Google token could not be read");
   }
+}
+
+async function saveGoogleConnection(token) {
+  // Calendar's primary ID identifies the account without requesting profile scopes.
+  const primaryUrl = "https://www.googleapis.com/calendar/v3/calendars/primary";
+  const primary = await googleJson(primaryUrl, token.access_token);
+  if (!primary.id) throw httpError(502, "Google did not return a primary calendar identity");
+  const accounts = db.prepare("SELECT * FROM google_accounts ORDER BY created_at, id").all();
+  let existing = accounts.find((account) => account.email === primary.id);
+  if (!existing) {
+    for (const account of accounts.filter((row) => !row.email)) {
+      // Older releases did not have permission to retrieve the account email.
+      // Resolve legacy identities rather than guessing from shared calendar access.
+      let identity;
+      try { identity = await googleJsonForAccount(account, primaryUrl); }
+      catch { throw httpError(409, "An older connection could not be identified. Disconnect that old connection before reconnecting."); }
+      if (identity.id === primary.id) { existing = account; break; }
+    }
+  }
+  const id = existing?.id || `acct_${randomBytes(8).toString("hex")}`;
+  const tokenRelative = existing?.token_path || path.join("secrets", `${id}.json`);
+  const savedToken = existing ? { ...readToken(existing), ...token } : token;
+  writePrivateJson(safeDataPath(tokenRelative), savedToken);
+  db.prepare(`INSERT INTO google_accounts(id, label, email, token_path, created_at)
+    VALUES(?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
+    label=excluded.label, email=excluded.email, last_error=NULL
+  `).run(id, primary.id, primary.id, tokenRelative, new Date().toISOString());
+  return { id, token_path: tokenRelative };
+}
+
+function disconnectGoogleAccount(id) {
+  if (syncInProgress || accountMutationInProgress) throw httpError(409, "Calendar sync is running. Wait a moment and try disconnecting again.");
+  const account = db.prepare("SELECT * FROM google_accounts WHERE id = ?").get(id);
+  if (!account) throw httpError(404, "Google connection not found");
+  // Foreign-key cascades remove only this connection's sources and cached events.
+  // Do not revoke Google's grant: duplicate connections may share that grant.
+  fs.rmSync(safeDataPath(account.token_path), { force: true });
+  db.prepare("DELETE FROM google_accounts WHERE id = ?").run(id);
+  calendarRevision += 1;
+  broadcastState();
 }
 
 async function getAccessToken(account) {
@@ -945,7 +987,7 @@ async function refreshGoogleSources(account) {
 }
 
 async function syncCalendars() {
-  if (APP_MODE !== "production" || syncInProgress) return { skipped: true };
+  if (APP_MODE !== "production" || syncInProgress || accountMutationInProgress) return { skipped: true };
   syncInProgress = true;
   const attemptedAt = new Date().toISOString();
   db.prepare("UPDATE sync_status SET last_attempt_at = ?, error = NULL WHERE id = 1").run(attemptedAt);
@@ -1097,20 +1139,19 @@ async function handleRequest(req, res) {
     if (!savedState || savedState.createdAt + OAUTH_STATE_TTL_MS < Date.now()) return sendText(res, 400, "This Google pairing link expired. Return to the control page and try again.");
     if (sessionFromRequest(req)?.token !== savedState.sessionToken) return sendText(res, 403, "This Google pairing must be completed in the same paired browser.");
     if (!code) return sendText(res, 400, "Google authorization was not completed. Return to the control page and try again.");
-    const token = await exchangeGoogleCode(req, code);
-    const accountId = `acct_${randomBytes(8).toString("hex")}`;
-    const tokenRelative = path.join("secrets", `${accountId}.json`);
-    writePrivateJson(safeDataPath(tokenRelative), token);
-    let email = null;
+    if (syncInProgress || accountMutationInProgress) throw httpError(409, "Calendar sync is running. Wait a moment, then start Google connection again.");
+    accountMutationInProgress = true;
     try {
-      const user = await googleJson("https://www.googleapis.com/oauth2/v2/userinfo", token.access_token);
-      email = user.email || null;
-    } catch {
-      // The calendar connection remains useful even if optional profile lookup fails.
-    }
-    db.prepare("INSERT INTO google_accounts(id, label, email, token_path, created_at) VALUES(?, ?, ?, ?, ?)").run(accountId, email || "Google account", email, tokenRelative, new Date().toISOString());
-    await refreshGoogleSources({ id: accountId, token_path: tokenRelative });
+      const token = await exchangeGoogleCode(req, code);
+      const account = await saveGoogleConnection(token);
+      await refreshGoogleSources(account);
+    } finally { accountMutationInProgress = false; }
     return redirect(res, "/control?google=connected");
+  }
+  if (method === "DELETE" && url.pathname.startsWith("/api/google/accounts/")) {
+    requireAdmin(req);
+    disconnectGoogleAccount(decodeURIComponent(url.pathname.slice("/api/google/accounts/".length)));
+    return sendJson(res, 200, { ok: true, ...getAccountsAndSources() });
   }
   if (method === "GET" && url.pathname === "/api/google/accounts") {
     requireAdmin(req);
@@ -1125,6 +1166,8 @@ async function handleRequest(req, res) {
       if (typeof source.id !== "string") continue;
       update.run(source.enabled ? 1 : 0, source.id);
     }
+    calendarRevision += 1;
+    broadcastState();
     await syncCalendars();
     broadcastState();
     return sendJson(res, 200, { ok: true, ...getAccountsAndSources() });
@@ -1187,6 +1230,9 @@ if (shouldStartServer && APP_MODE === "production" && !adminPinIsConfigured()) {
 }
 
 export {
+  saveGoogleConnection,
+  disconnectGoogleAccount,
+  getCachedEvents,
   addDays,
   addMonths,
   dayOfWeek,

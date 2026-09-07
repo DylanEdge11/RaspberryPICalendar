@@ -167,7 +167,7 @@ If the Pi desktop uses a user systemd session instead of a system service, copy 
 
 ```sh
 cd /opt/family-calendar
-sudo ./scripts/backup.sh
+sudo bash scripts/backup.sh
 sudo git fetch origin
 sudo git pull --ff-only origin main
 sudo npm ci --omit=dev
@@ -194,10 +194,14 @@ The schema has a `schema_version` setting and is currently version 1. Future mig
 
 ## Backups and restore
 
+Calendar connection maintenance: use **Disconnect account** in phone controls to remove an extra connection. This deletes only that connection's local token and cached calendars/events, never Google events or other connections. Unchecking hides cached events immediately, even during an internet outage. Reconnecting reuses the primary calendar identity and preserves selections, using the existing read-only scope ([Google endpoint](https://developers.google.com/workspace/calendar/api/v3/reference/calendars/get)). Existing duplicates require explicit removal. If an unidentified legacy connection has expired, disconnect it before reconnecting. Disconnect during active sync asks you to retry shortly.
+
+This update makes no schema changes. Reload the display and controls once after updating. Normal rollback uses the previous commit; restoring a removed connection requires the protected data backup.
+
 `scripts/backup.sh` makes a SQLite-consistent copy, writes a portable checksum file, and archives `photos/` and `secrets/` under `/var/backups/family-calendar` by default. It requires the `sqlite3` command. Protect the backup because it contains family photos and Google refresh tokens:
 
 ```sh
-sudo BACKUP_ROOT=/var/backups/family-calendar ./scripts/backup.sh
+sudo BACKUP_ROOT=/var/backups/family-calendar bash scripts/backup.sh
 ```
 
 Also back up `/etc/family-calendar/calendar.env` and the Google client JSON through a separately protected method. The app does not upload backups anywhere.
