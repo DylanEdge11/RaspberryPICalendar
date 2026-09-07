@@ -396,3 +396,27 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--teal); outline-
   .album-weather-column { gap: 8px; }
   .album-weather-column .weather-widget { min-height: 54px; padding: 10px; }
 }
+
+/* Consistent calendar buttons on Safari, including older colour support. */
+.display-page button { -webkit-appearance: none; appearance: none; font-family: inherit; }
+.display-page { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+.display-page.pointer-navigation button:focus,
+.display-page.pointer-navigation a:focus,
+.display-page.pointer-navigation #openAlbum:focus { outline: none; }
+.timed-event, .allday-chip, .month-event { background: var(--event-tint, #eef1ef); }
+.timed-event { border-radius: 5px; }
+.month-event { border-left: 3px solid var(--event-color); }
+.month-event .event-dot { display: none; }
+@media (max-width: 1280px) {
+  .month-event { display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: 4px; white-space: normal; }
+  .month-event .event-title { order: -1; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.25; overflow: hidden; }
+  .month-event .event-time { font-size: 0.85em; }
+  .month-cell { padding: 4px 3px; }
+}
+@media (pointer: coarse) {
+  .week-time-row { -webkit-overflow-scrolling: touch; }
+  .timed-event { padding: 3px 4px; font-size: 12px; line-height: 1.25; }
+  .timed-event:not(.compact-event) strong { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .month-grid { overflow-y: auto; grid-template-rows: repeat(6, minmax(125px, 1fr)); }
+  .month-cell { overflow-y: auto; }
+}

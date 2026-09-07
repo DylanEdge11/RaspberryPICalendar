@@ -1,6 +1,12 @@
 (() => {
   "use strict";
 
+  // Preserve keyboard focus cues without leaving rings behind after a tap.
+  document.addEventListener("pointerdown", () => document.body.classList.add("pointer-navigation"), true);
+  document.addEventListener("keydown", event => {
+    if (["Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) document.body.classList.remove("pointer-navigation");
+  }, true);
+
   const dom = {
     displayTitle: document.getElementById("displayTitle"),
     modeLabel: document.getElementById("modeLabel"),
@@ -109,6 +115,12 @@
 
   function safeColor(value) {
     return /^#[0-9a-f]{6}$/i.test(String(value || "")) ? value : "#6d7bea";
+  }
+
+  function eventTint(color) {
+    const hex = safeColor(color).slice(1);
+    const channels = [0, 2, 4].map(offset => Math.round(parseInt(hex.slice(offset, offset + 2), 16) * 0.18 + 255 * 0.82));
+    return `rgb(${channels.join(',')})`;
   }
 
   function dateFromKey(key) {
@@ -315,7 +327,8 @@
     TIME_START = (app.state.settings.weekly_start_hour ?? 6) * 60;
     TIME_END = (app.state.settings.weekly_end_hour ?? 22) * 60;
     const hours = (TIME_END - TIME_START) / 60;
-    weeklyRowHeight = Math.max(18, Math.min(60, (dom.calendarMount.clientHeight - 125) / hours));
+    const minimumRowHeight = window.matchMedia("(pointer: coarse)").matches ? 56 : 18;
+    weeklyRowHeight = Math.max(minimumRowHeight, Math.min(60, (dom.calendarMount.clientHeight - 125) / hours));
     const dates = [];
     for (let date = app.state.period.start; date < app.state.period.end; date = addDays(date, 1)) dates.push(date);
     const dayHeadings = dates.map((date) => {
@@ -324,7 +337,7 @@
     }).join("");
     const allDay = dates.map((date) => {
       const events = app.events.filter((event) => event.all_day && date >= event.start_date && date < event.end_date);
-      const visible = events.slice(0, 2).map((event) => `<button ${eventButton(event)} class="allday-chip" style="--event-color:${safeColor(event.calendar_color)}" title="${escapeHtml(event.title)}">${escapeHtml(event.title)}</button>`).join("");
+      const visible = events.slice(0, 2).map((event) => `<button ${eventButton(event)} class="allday-chip" style="--event-color:${safeColor(event.calendar_color)};--event-tint:${eventTint(event.calendar_color)}" title="${escapeHtml(event.title)}">${escapeHtml(event.title)}</button>`).join("");
       const more = events.length > 2 ? `<button type="button" data-day="${date}" class="allday-more">+${events.length - 2} more</button>` : "";
       return `<div class="allday-cell">${visible}${more}</div>`;
     }).join("");
@@ -351,7 +364,7 @@
       const left = (lane * 100) / laneCount;
       const width = 100 / laneCount;
       const time = event.start_time ? `${formatTime(event.start_time)}${event.end_time ? ` – ${formatTime(event.end_time)}` : ""}` : "";
-      return `<button ${eventButton(event)} class="timed-event ${height < 34 ? 'compact-event' : ''}" style="--event-color:${color};top:${top}px;height:${height}px;left:calc(${left}% + 2px);width:calc(${width}% - 5px)" title="${escapeHtml(`${event.title}${time ? ` · ${time}` : ""}`)}"><strong>${escapeHtml(event.title)}</strong><span>${escapeHtml(time)}</span></button>`;
+      return `<button ${eventButton(event)} class="timed-event ${height < 34 ? 'compact-event' : ''}" style="--event-color:${color};--event-tint:${eventTint(color)};top:${top}px;height:${height}px;left:calc(${left}% + 2px);width:calc(${width}% - 5px)" title="${escapeHtml(`${event.title}${time ? ` · ${time}` : ""}`)}"><strong>${escapeHtml(event.title)}</strong><span>${escapeHtml(time)}</span></button>`;
     }).join("");
     return `<div class="day-canvas ${date === app.state.today ? "today" : ""}">${html}</div>`;
   }
@@ -391,7 +404,7 @@
       const visible = events.slice(0, 4).map((event) => {
         const color = safeColor(event.calendar_color);
         const time = event.all_day ? "All day" : formatTime(event.start_time);
-        return `<button ${eventButton(event)} class="month-event" style="--event-color:${color}" title="${escapeHtml(event.title)}"><span class="event-dot"></span><span class="event-time">${escapeHtml(time)}</span><span class="event-title">${escapeHtml(event.title)}</span></button>`;
+        return `<button ${eventButton(event)} class="month-event" style="--event-color:${color};--event-tint:${eventTint(color)}" title="${escapeHtml(event.title)}"><span class="event-dot"></span><span class="event-time">${escapeHtml(time)}</span><span class="event-title">${escapeHtml(event.title)}</span></button>`;
       }).join("");
       const more = events.length > 4 ? `<button type="button" data-day="${date}" class="month-more">+${events.length - 4} more</button>` : "";
       const outside = date.slice(0, 7) !== monthKey;
