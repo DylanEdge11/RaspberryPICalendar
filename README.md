@@ -342,3 +342,9 @@ On the actual tablet, check tap accuracy, scrolling, pinch zoom, rotation, scree
 The wall display now uses the available viewport height (100dvh, with a 100vh fallback). Removed the tall minimum card/month-row sizing that forced page scrolling. Landscape keeps photos beside the calendar; portrait allocates a smaller photo strip below it. Compact headers preserve calendar space. All six month rows fit; crowded day cells and event-detail dialogs can still scroll, and tapping a date opens the full day list. Controls remains separate. This supersedes the earlier note that month view requires page scrolling.
 
 Verified in the development browser: week and month at 1024×600, and month at 800×1280, have document height equal to viewport height. Syntax and diff checks passed. Physical SM-T510 verification and Pi installation remain pending.
+
+## Weather widget
+
+The display header shows current weather in Celsius (Regina by default). In phone Controls, set **Weather location** to a city, optionally followed by its province or country, and choose **Hourly today** or **Next 7 days**, then save settings. Tap the weather widget to open that forecast; Close or Escape returns to the calendar. Forecast times use the selected location’s timezone and always follow today, independently of calendar navigation.
+
+Weather uses [Open-Meteo](https://open-meteo.com/) forecast and geocoding APIs without an API key. The Pi needs outbound HTTPS access to api.open-meteo.com and geocoding-api.open-meteo.com. Forecasts are cached in memory for 15 minutes; temporary failures show the last successful forecast with an out-of-date label. After a restart without internet, weather shows unavailable until connectivity returns. City searches use the first matching location; the forecast window shows its full resolved name so you can refine ambiguous searches.

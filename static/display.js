@@ -34,6 +34,71 @@
     stream: null
   };
 
+
+  const weatherButton = document.getElementById("weatherWidget");
+  const weatherDialog = document.getElementById("weatherDialog");
+  let weatherData = null;
+  let weatherError = "";
+  let weatherRequest = 0;
+  const degrees = value => Number.isFinite(value) ? Math.round(value) + "°" : "—";
+  function conditions(code) {
+    if (code === 0) return ["☀️", "Clear"];
+    if ([1, 2].includes(code)) return ["🌤️", "Partly cloudy"];
+    if (code === 3) return ["☁️", "Overcast"];
+    if ([45, 48].includes(code)) return ["🌫️", "Fog"];
+    if ([71, 73, 75, 77, 85, 86].includes(code)) return ["🌨️", "Snow"];
+    if ([95, 96, 99].includes(code)) return ["⛈️", "Thunderstorms"];
+    if ([51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82].includes(code)) return ["🌧️", "Rain"];
+    return ["☁️", "Conditions unavailable"];
+  }
+  async function loadWeather() {
+    if (!app.state) return;
+    const request = ++weatherRequest;
+    const city = app.state.settings.weather_city;
+    if (weatherData?.city !== city) weatherData = null;
+    weatherError = "";
+    renderWeather();
+    try {
+      const data = await requestJson("/api/weather");
+      if (request !== weatherRequest) return;
+      weatherData = { ...data, city };
+    } catch (error) {
+      if (request !== weatherRequest) return;
+      weatherError = error.message;
+    }
+    renderWeather();
+  }
+  function renderWeather() {
+    if (!app.state) return;
+    const city = app.state.settings.weather_city;
+    const data = weatherData;
+    const weekly = app.state.settings.weather_duration === "weekly";
+    document.getElementById("weatherTitle").textContent = (data?.location.name || city) + " · " + (weekly ? "Next 7 days" : "Hourly today");
+    if (!data) {
+      weatherButton.textContent = "☁ " + city + (weatherError ? " · Unavailable" : " · Loading…");
+      document.getElementById("weatherBody").textContent = weatherError || "Loading forecast…";
+      return;
+    }
+    const [icon, label] = conditions(data.current.weather_code);
+    const stale = data.stale || Boolean(weatherError);
+    weatherButton.textContent = icon + " " + degrees(data.current.temperature_2m) + "C · " + city + (stale ? " · Last saved" : "");
+    weatherButton.setAttribute("aria-label", city + ": " + degrees(data.current.temperature_2m) + " Celsius, " + label + ". Open " + (weekly ? "7-day forecast" : "today's hourly forecast"));
+    const today = new Intl.DateTimeFormat("en-CA", { timeZone: data.timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+    const source = weekly ? data.daily : data.hourly;
+    const rows = source.time.map((time, i) => {
+      if (!weekly && time.slice(0, 10) !== today) return "";
+      const [symbol, description] = conditions(source.weather_code[i]);
+      const when = weekly ? formatDate(time, { weekday: "short", month: "short", day: "numeric" }) : formatTime(time.slice(11, 16));
+      const temp = weekly ? degrees(source.temperature_2m_max[i]) + " / " + degrees(source.temperature_2m_min[i]) : degrees(source.temperature_2m[i]);
+      const rain = (weekly ? source.precipitation_probability_max : source.precipitation_probability)?.[i];
+      return '<tr><th scope="row">' + escapeHtml(when) + '</th><td>' + symbol + ' ' + description + '</td><td>' + temp + '</td><td>' + (Number.isFinite(rain) ? rain + "%" : "—") + '</td></tr>';
+    }).join("");
+    document.getElementById("weatherBody").innerHTML = '<p>' + icon + ' ' + label + ' · Feels like ' + degrees(data.current.apparent_temperature) + 'C · Wind ' + (Number.isFinite(data.current.wind_speed_10m) ? Math.round(data.current.wind_speed_10m) + ' km/h' : '—') + '</p><p class="muted-copy">' + (stale ? 'Weather may be out of date. Last successful update: ' : 'Updated: ') + escapeHtml(new Date(data.updated_at).toLocaleString()) + ' · Forecast times: ' + escapeHtml(data.timezone) + '</p>' + (rows ? '<div class="weather-table-wrap"><table class="weather-table"><thead><tr><th>' + (weekly ? 'Day' : 'Time') + '</th><th>Conditions</th><th>' + (weekly ? 'High / Low' : 'Temp') + '</th><th>Precip.</th></tr></thead><tbody>' + rows + '</tbody></table></div>' : '<p>Today’s forecast is unavailable. Waiting for updated weather.</p>');
+  }
+  weatherButton.addEventListener("click", () => { renderWeather(); weatherDialog.showModal(); loadWeather(); });
+  document.getElementById("closeWeather").addEventListener("click", () => weatherDialog.close());
+  setInterval(loadWeather, 5 * 60 * 1000);
+
   let TIME_START = 6 * 60;
   let TIME_END = 22 * 60;
   let weeklyRowHeight = 43;
@@ -118,7 +183,10 @@
     const changedPeriod = !app.state || periodKey(app.state) !== periodKey(next);
     const changedCalendar = !app.state || syncKey(app.state) !== syncKey(next);
     const changedPhotos = !app.state || app.state.photo_count !== next.photo_count;
+    const weatherChanged = app.state?.settings.weather_city !== next.settings.weather_city;
     app.state = next;
+    if (weatherChanged) loadWeather();
+    else renderWeather();
     renderChrome();
     if (changedPeriod || changedCalendar) await loadEvents();
     if (changedPhotos) await loadPhotos();

@@ -9,6 +9,9 @@ import { DatabaseSync } from "node:sqlite";
 import { createPhotosPicker } from "./photos-picker.mjs";
 import { createUpdateControl } from "./phone-updates.mjs";
 
+import { createWeatherService } from "./weather.mjs";
+const weather = createWeatherService();
+
 const ROOT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const STATIC_DIR = path.join(ROOT_DIR, "static");
 const APP_MODE = (process.env.APP_MODE || "demo").trim().toLowerCase();
@@ -36,6 +39,8 @@ const SECURITY_HEADERS = {
 };
 
 const DEFAULT_SETTINGS = {
+  weather_city: "Regina",
+  weather_duration: "hourly",
   view: "week",
   anchor_date: todayKey(),
   week_start: "monday",
@@ -246,6 +251,8 @@ function setSetting(key, value) {
 function readSettings() {
   const values = Object.fromEntries(db.prepare("SELECT key, value FROM settings").all().map((row) => [row.key, row.value]));
   return {
+    weather_city: values.weather_city || "Regina",
+    weather_duration: values.weather_duration === "weekly" ? "weekly" : "hourly",
     view: values.view === "month" ? "month" : "week",
     anchor_date: isDateKey(values.anchor_date) ? values.anchor_date : todayKey(),
     week_start: values.week_start === "sunday" ? "sunday" : "monday",
@@ -263,6 +270,14 @@ function readSettings() {
 function updateSettings(patch) {
   const current = readSettings();
   const next = { ...current };
+  if (patch.weather_city !== undefined) {
+    if (typeof patch.weather_city !== "string" || !patch.weather_city.trim() || patch.weather_city.length > 120) throw httpError(400, "Weather location must be 1–120 characters");
+    next.weather_city = patch.weather_city.trim();
+  }
+  if (patch.weather_duration !== undefined) {
+    if (!["hourly", "weekly"].includes(patch.weather_duration)) throw httpError(400, "Weather duration must be hourly or weekly");
+    next.weather_duration = patch.weather_duration;
+  }
   for (const [key, min, max] of [['weekly_start_hour', 0, 23], ['weekly_end_hour', 1, 24]]) {
     if (patch[key] !== undefined) {
       if (typeof patch[key] !== 'number' || !Number.isInteger(patch[key]) || patch[key] < min || patch[key] > max) {
@@ -1137,6 +1152,10 @@ async function handleRequest(req, res) {
 
   if (method === "GET" && url.pathname === "/api/health") {
     return sendJson(res, 200, { ok: true, mode: APP_MODE, timezone: TIMEZONE, version: "0.1.0", server_time: new Date().toISOString(), instance_id: INSTANCE_ID });
+  }
+  if (method === "GET" && url.pathname === "/api/weather") {
+    try { return sendJson(res, 200, await weather.get(readSettings().weather_city)); }
+    catch (error) { throw httpError(503, error.message); }
   }
   if (method === "GET" && url.pathname === "/api/state") return sendJson(res, 200, getStatePayload());
   if (method === "GET" && url.pathname === "/api/events") {

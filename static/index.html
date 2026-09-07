@@ -19,6 +19,7 @@
         </div>
         <div class="topbar-status">
           <span class="status-pill" id="syncStatus"><span class="status-dot"></span>Loading calendar</span>
+          <button type="button" class="weather-widget" id="weatherWidget" aria-haspopup="dialog">☁ Weather loading…</button>
           <span class="clock" id="clock" aria-label="Current time"></span>
           <a class="icon-link controls-link" href="/control" target="_blank" rel="noopener" aria-label="Open Controls in a separate tab">Controls</a>
         </div>
@@ -71,6 +72,7 @@
       <div class="detail-heading"><h2 id="detailTitle">Event details</h2><button type="button" class="secondary-button" id="closeDetails" autofocus>Close</button></div>
       <div id="detailBody"></div>
     </dialog>
+    <dialog id="weatherDialog" aria-labelledby="weatherTitle"><div class="detail-heading"><h2 id="weatherTitle">Weather</h2><button type="button" class="secondary-button" id="closeWeather" autofocus>Close</button></div><div id="weatherBody"></div><p class="weather-credit">Forecast by <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> · Temperatures in °C</p></dialog>
     <script src="/static/display.js?v=0.2.0" defer></script>
   </body>
 </html>

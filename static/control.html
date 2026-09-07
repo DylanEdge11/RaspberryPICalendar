@@ -62,6 +62,8 @@
           <section class="surface-card control-card settings-card">
             <div class="card-heading-row"><div><p class="section-kicker">DISPLAY SETTINGS</p><h2>Make it yours.</h2></div><span class="card-number">02</span></div>
             <form id="settingsForm">
+<label class="setting-row"><span><strong>Weather location</strong><small>City, province or country · Celsius</small></span><input id="weatherCity" type="text" maxlength="120" required placeholder="Regina"></label>
+<label class="setting-row"><span><strong>Weather forecast</strong><small>Opens when you tap the weather widget</small></span><select id="weatherDuration"><option value="hourly">Hourly today</option><option value="weekly">Next 7 days</option></select></label>
               <div class="quiet-time-grid weekly-time-grid"><label class="field-label">Weekly start time<select class="select-input" id="weeklyStartHour"></select></label><label class="field-label">Weekly end time<select class="select-input" id="weeklyEndHour"></select></label></div>
               <p class="muted-copy">Weekly view only. End time must be later than start time. Choose midnight (end of day) to include 11 PM events.</p>
               <label class="setting-row"><span><strong>Week starts on</strong><small>Used by week and month views</small></span><select class="select-input" id="weekStart"><option value="monday">Monday</option><option value="sunday">Sunday</option></select></label>

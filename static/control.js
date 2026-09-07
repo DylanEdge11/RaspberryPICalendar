@@ -206,6 +206,8 @@
     dom.weekStart.value = settings.week_start;
     dom.weeklyStartHour.value = settings.weekly_start_hour ?? 6;
     dom.weeklyEndHour.value = settings.weekly_end_hour ?? 22;
+    document.getElementById("weatherCity").value = settings.weather_city;
+    document.getElementById("weatherDuration").value = settings.weather_duration;
     dom.slideshowSeconds.value = settings.slideshow_seconds;
     dom.showPhotoCaptions.checked = Boolean(settings.show_photo_captions);
     dom.displayTitleInput.value = settings.display_title;
@@ -366,6 +368,8 @@
         week_start: dom.weekStart.value,
         weekly_start_hour: Number(dom.weeklyStartHour.value),
         weekly_end_hour: Number(dom.weeklyEndHour.value),
+        weather_city: document.getElementById("weatherCity").value.trim(),
+        weather_duration: document.getElementById("weatherDuration").value,
         slideshow_seconds: Number(dom.slideshowSeconds.value),
         show_photo_captions: dom.showPhotoCaptions.checked,
         display_title: dom.displayTitleInput.value,

@@ -362,3 +362,14 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--teal); outline-
   .photo-header { display: none; }
 }
 .month-cell { scrollbar-width: thin; scrollbar-color: #ced2d0 transparent; }
+
+/* Current weather and touch-friendly forecast window. */
+.weather-widget { border: 1px solid #cbd9db; border-radius: 16px; padding: 10px 14px; background: #eef6f6; color: #183b42; font: inherit; font-size: clamp(12px, 1.1vw, 18px); cursor: pointer; }
+.weather-widget:focus-visible { outline: 3px solid #287c87; outline-offset: 3px; }
+#weatherDialog { width: min(760px, 92vw); max-height: 85vh; border: 0; border-radius: 20px; padding: 24px; color: #183b42; background: #f8fbfb; overflow: auto; }
+#weatherDialog::backdrop { background: #10182099; }
+.weather-table-wrap { overflow-x: auto; }
+.weather-table { width: 100%; border-collapse: collapse; font-size: 16px; }
+.weather-table th, .weather-table td { padding: 12px 8px; text-align: left; border-bottom: 1px solid #dbe5e5; }
+.weather-credit { font-size: 13px; }
+#weatherCity { width: min(220px, 45vw); }
