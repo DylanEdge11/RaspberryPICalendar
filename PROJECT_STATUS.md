@@ -72,3 +72,9 @@ The valid-image upload path was exercised with a PNG after installing the locked
 - Google OAuth currently stores refresh tokens as permission-protected JSON under the Pi data directory; protect the OS account and backups. The service is not intended for public exposure.
 - There is no voice-controlled screen switching in this release; the phone controls are the fallback. Research found no direct arbitrary-HTTP action in the current Google Home automation action list. Home Assistant is a possible future bridge but adds a service, Google account-linking/SSL or a paid cloud option, and Pi resource risk.
 - There is no monitor power-off automation, touch interaction, Spotify playback, meal planning, chores, freezer inventory, or shopping list feature.
+
+## Tablet stage — 2026-09-07
+
+Implemented touch event details and full-day event lists, separate-tab Controls link, tablet layout/readability changes, hidden-tab slideshow pause, foreground/online state refresh and debounced resizing. No backend or schema changes. README contains Pi hub/browser setup, remaining enhancement options and physical-tablet acceptance checks. The earlier statement that touch interaction is absent is superseded by this release.
+
+Validation: syntax checks and all 18 existing Node tests pass. In-app Chromium checked at 1280×800, 800×1280 and 1024×768; event popup, location/time fields, outside/Close/Escape dismissal, day-list selection and month-event selection passed. Physical Samsung touchscreen, power management and sustained resource consumption remain unverified. Changes are local, not published or installed on the Pi.

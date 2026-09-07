@@ -179,11 +179,68 @@
     dom.calendarLegend.innerHTML = items.map(([name, color]) => `<span class="legend-item"><span class="legend-swatch" style="background:${color}"></span>${escapeHtml(name)}</span>`).join("");
   }
 
-  window.addEventListener('resize', () => renderCalendar());
+  let resizeTimer;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(renderCalendar, 150);
+  });
+
+  const detailDialog = document.getElementById("eventDialog");
+  const detailBody = document.getElementById("detailBody");
+  let detailEvents = [];
+  function eventButton(event) {
+    return `type="button" data-event="${app.events.indexOf(event)}" aria-label="${escapeHtml(`Show details: ${event.title}`)}"`;
+  }
+  function eventWhen(event) {
+    const options = { weekday: "short", month: "short", day: "numeric", year: "numeric" };
+    const start = formatDate(event.start_date, options);
+    if (event.all_day) {
+      const last = addDays(event.end_date, -1);
+      return `${start}${last > event.start_date ? ` – ${formatDate(last, options)}` : ""} · All day`;
+    }
+    return `${start}, ${formatTime(event.start_time)} – ${event.end_date !== event.start_date ? `${formatDate(event.end_date, options)}, ` : ""}${formatTime(event.end_time)} · ${app.state.timezone}`;
+  }
+  function openDetails(title, content) {
+    document.getElementById("detailTitle").textContent = title;
+    detailBody.innerHTML = content;
+    if (!detailDialog.open) detailDialog.showModal();
+    detailDialog.scrollTop = 0;
+    document.getElementById("closeDetails").focus();
+  }
+  function handleCalendarTap(event) {
+    const button = event.target.closest("[data-event], [data-day]");
+    if (!button) return;
+    if (button.dataset.day) {
+      detailEvents = app.events.slice();
+      const date = button.dataset.day;
+      const events = app.events.filter(item => eventOverlapsDate(item, date)).sort((a, b) => Number(b.all_day) - Number(a.all_day) || (a.start_time || "").localeCompare(b.start_time || ""));
+      openDetails(formatDate(date, { weekday: "long", month: "long", day: "numeric", year: "numeric" }), events.length ? events.map(item => `<button ${eventButton(item)} class="day-list-event"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(eventWhen(item))}</span><span>${escapeHtml(item.calendar || "Calendar")}</span></button>`).join("") : "<p>No events for this day.</p>");
+    } else {
+      const item = (detailBody.contains(button) ? detailEvents : app.events)[Number(button.dataset.event)];
+      if (!item) return;
+      openDetails(item.title || "Untitled event", `<p>${escapeHtml(eventWhen(item))}</p><p><strong>Calendar</strong><br>${escapeHtml(item.calendar || "Calendar")}</p>${item.location ? `<p><strong>Location</strong><br>${escapeHtml(item.location)}</p>` : ""}<p class="event-description">${escapeHtml(item.description || "No additional details.")}</p>`);
+    }
+  }
+  dom.calendarMount.addEventListener("click", handleCalendarTap);
+  detailBody.addEventListener("click", handleCalendarTap);
+  document.getElementById("closeDetails").addEventListener("click", () => detailDialog.close());
+  let backdropPress = false;
+  detailDialog.addEventListener("pointerdown", event => { backdropPress = event.target === detailDialog; });
+  detailDialog.addEventListener("click", event => {
+    if (backdropPress && event.target === detailDialog) {
+      const rect = detailDialog.getBoundingClientRect();
+      if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) detailDialog.close();
+    }
+    backdropPress = false;
+  });
 
   function renderCalendar() {
     if (!app.state?.period) return;
+    const oldScroll = dom.calendarMount.querySelector(".week-time-row")?.scrollTop || 0;
     dom.calendarMount.innerHTML = app.state.settings.view === "month" ? renderMonth() : renderWeek();
+    const scroller = dom.calendarMount.querySelector(".week-time-row");
+    if (scroller) scroller.scrollTop = oldScroll;
+    renderLegend();
   }
 
   function renderWeek() {
@@ -195,12 +252,12 @@
     for (let date = app.state.period.start; date < app.state.period.end; date = addDays(date, 1)) dates.push(date);
     const dayHeadings = dates.map((date) => {
       const today = date === app.state.today;
-      return `<div class="day-heading ${today ? "today" : ""}"><span>${formatDate(date, { weekday: "short" })}</span><span class="day-number">${formatDate(date, { day: "numeric" })}</span></div>`;
+      return `<button type="button" data-day="${date}" aria-label="Show all events for ${date}" class="day-heading ${today ? "today" : ""}"><span>${formatDate(date, { weekday: "short" })}</span><span class="day-number">${formatDate(date, { day: "numeric" })}</span></button>`;
     }).join("");
     const allDay = dates.map((date) => {
       const events = app.events.filter((event) => event.all_day && date >= event.start_date && date < event.end_date);
-      const visible = events.slice(0, 2).map((event) => `<span class="allday-chip" style="--event-color:${safeColor(event.calendar_color)}" title="${escapeHtml(event.title)}">${escapeHtml(event.title)}</span>`).join("");
-      const more = events.length > 2 ? `<div class="allday-more">+${events.length - 2} more</div>` : "";
+      const visible = events.slice(0, 2).map((event) => `<button ${eventButton(event)} class="allday-chip" style="--event-color:${safeColor(event.calendar_color)}" title="${escapeHtml(event.title)}">${escapeHtml(event.title)}</button>`).join("");
+      const more = events.length > 2 ? `<button type="button" data-day="${date}" class="allday-more">+${events.length - 2} more</button>` : "";
       return `<div class="allday-cell">${visible}${more}</div>`;
     }).join("");
     const dayCanvases = dates.map((date) => renderDayCanvas(date)).join("");
@@ -226,7 +283,7 @@
       const left = (lane * 100) / laneCount;
       const width = 100 / laneCount;
       const time = event.start_time ? `${formatTime(event.start_time)}${event.end_time ? ` – ${formatTime(event.end_time)}` : ""}` : "";
-      return `<div class="timed-event ${height < 34 ? 'compact-event' : ''}" style="--event-color:${color};top:${top}px;height:${height}px;left:calc(${left}% + 2px);width:calc(${width}% - 5px)" title="${escapeHtml(`${event.title}${time ? ` · ${time}` : ""}`)}"><strong>${escapeHtml(event.title)}</strong><span>${escapeHtml(time)}</span></div>`;
+      return `<button ${eventButton(event)} class="timed-event ${height < 34 ? 'compact-event' : ''}" style="--event-color:${color};top:${top}px;height:${height}px;left:calc(${left}% + 2px);width:calc(${width}% - 5px)" title="${escapeHtml(`${event.title}${time ? ` · ${time}` : ""}`)}"><strong>${escapeHtml(event.title)}</strong><span>${escapeHtml(time)}</span></button>`;
     }).join("");
     return `<div class="day-canvas ${date === app.state.today ? "today" : ""}">${html}</div>`;
   }
@@ -266,11 +323,11 @@
       const visible = events.slice(0, 4).map((event) => {
         const color = safeColor(event.calendar_color);
         const time = event.all_day ? "All day" : formatTime(event.start_time);
-        return `<div class="month-event" style="--event-color:${color}" title="${escapeHtml(event.title)}"><span class="event-dot"></span><span class="event-time">${escapeHtml(time)}</span><span class="event-title">${escapeHtml(event.title)}</span></div>`;
+        return `<button ${eventButton(event)} class="month-event" style="--event-color:${color}" title="${escapeHtml(event.title)}"><span class="event-dot"></span><span class="event-time">${escapeHtml(time)}</span><span class="event-title">${escapeHtml(event.title)}</span></button>`;
       }).join("");
-      const more = events.length > 4 ? `<div class="month-more">+${events.length - 4} more</div>` : "";
+      const more = events.length > 4 ? `<button type="button" data-day="${date}" class="month-more">+${events.length - 4} more</button>` : "";
       const outside = date.slice(0, 7) !== monthKey;
-      return `<div class="month-cell ${outside ? "outside" : ""} ${date === app.state.today ? "today" : ""}"><div class="month-date">${formatDate(date, { day: "numeric" })}</div>${visible}${more}</div>`;
+      return `<div class="month-cell ${outside ? "outside" : ""} ${date === app.state.today ? "today" : ""}"><button type="button" data-day="${date}" aria-label="Show all events for ${date}" class="month-date">${formatDate(date, { day: "numeric" })}</button>${visible}${more}</div>`;
     }).join("");
     return `<div class="month-view"><div class="month-weekdays">${weekdays}</div><div class="month-grid">${cells}</div></div>`;
   }
@@ -319,7 +376,7 @@
     window.clearInterval(app.photoTimer);
     const seconds = app.state?.settings?.slideshow_seconds || 12;
     app.photoTimer = window.setInterval(() => {
-      if (app.photos.length > 1) {
+      if (!document.hidden && app.photos.length > 1) {
         app.photoIndex = (app.photoIndex + 1) % app.photos.length;
         renderPhoto();
       }
@@ -389,5 +446,9 @@
     window.setInterval(updateNightMode, 30_000);
   }
 
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) loadState().catch(() => { dom.connectionMessage.textContent = "Reconnecting…"; });
+  });
+  window.addEventListener("online", () => loadState().catch(() => {}));
   init();
 })();

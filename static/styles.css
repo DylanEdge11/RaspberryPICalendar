@@ -286,3 +286,49 @@ a { color: inherit; text-decoration: none; }
   .photo-card { gap: 9px; }
   .photo-note { font-size: 0.58rem; }
 }
+/* Touch display: day buttons provide generous targets for dense event grids. */
+.controls-link { width: auto; min-height: 48px; padding: 0 14px; border-radius: 12px; font-size: 0.85rem; }
+.day-heading, .month-date, .allday-more, .month-more { border: 0; background: transparent; }
+.timed-event, .allday-chip, .month-event { border-top: 0; border-right: 0; border-bottom: 0; text-align: left; }
+.month-event { border-left: 0; width: 100%; }
+.allday-chip { width: 100%; }
+.day-heading { min-height: 48px; }
+.month-date { width: 48px; height: 48px; }
+.allday-more, .month-more { min-height: 44px; margin: 0; font-size: 0.75rem; }
+button:focus-visible, a:focus-visible { outline: 3px solid var(--teal); outline-offset: 2px; }
+#eventDialog { width: min(600px, calc(100% - 32px)); max-height: 85vh; max-height: 85dvh; padding: 24px; border: 1px solid var(--line); border-radius: 20px; background: var(--paper-bright); color: var(--ink); overflow-wrap: anywhere; overscroll-behavior: contain; }
+#eventDialog::backdrop { background: rgba(8, 18, 28, 0.65); }
+.detail-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.detail-heading h2 { margin: 0; font-size: 1.4rem; }
+#closeDetails { min-height: 48px; flex-shrink: 0; }
+#detailBody { font-size: 1rem; line-height: 1.6; }
+.event-description { white-space: pre-wrap; }
+.day-list-event { width: 100%; display: grid; gap: 4px; padding: 14px; margin-top: 12px; min-height: 48px; text-align: left; border: 1px solid var(--line); border-radius: 12px; background: white; color: var(--ink); }
+.day-list-event span { font-size: 0.9rem; color: var(--ink-soft); }
+@media (max-width: 1280px) {
+  .display-app { padding: 16px; gap: 12px; }
+  .display-layout { grid-template-columns: minmax(0, 1fr) minmax(170px, 0.28fr); gap: 12px; }
+  .calendar-card, .photo-card { padding: 14px; }
+  .calendar-heading { flex-wrap: wrap; gap: 8px; padding-bottom: 12px; }
+  .calendar-legend { max-width: none; justify-content: flex-start; }
+  .calendar-heading h2 { font-size: 1.4rem; }
+  .timed-event, .allday-chip, .month-event { font-size: 0.75rem; }
+  .month-cell { overflow-y: auto; }
+  .month-grid { grid-template-rows: repeat(6, minmax(130px, 1fr)); }
+  .legend-item, .day-heading, .month-weekday, .time-label { font-size: 0.7rem; }
+}
+@media (max-width: 900px) {
+  .display-layout { display: flex; flex-direction: column; }
+  .calendar-card { min-height: 680px; }
+  .photo-card { min-height: 280px; }
+  .photo-frame { min-height: 230px; aspect-ratio: 16 / 9; }
+  .week-header, .week-allday { min-width: 0; }
+  .week-time-row > .day-canvases { min-width: 0; }
+}
+@media (pointer: coarse) {
+  .allday-chip, .month-event { min-height: 36px; }
+  .photo-frame:hover img { transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

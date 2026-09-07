@@ -310,3 +310,29 @@ Not claimed until performed on the actual hardware/accounts:
 - Raspberry Pi OS architecture-specific install, `sharp` ARM decoding, memory use with Chromium, kiosk restart after reboot, monitor behavior, or performance at a resolution other than the initial 1080p target.
 - Live Google OAuth, personal/shared/additional-account calendars, recurring exceptions from a real account, outage/recovery against Google, or real iPhone HEIC uploads.
 - Nest speaker voice commands or any voice-controlled screen switching. No voice route is included in this release.
+
+## Samsung tablet display (touch release)
+
+The Pi can run as a headless hub: keep `family-calendar.service` running and open `http://<Pi-LAN-address>:8080/` on the tablet on the same home Wi-Fi. Reserve the Pi's LAN address in the router so bookmarks remain valid. The Pi needs no attached screen for normal calendar operation. Its optional Chromium kiosk service is unnecessary when the tablet is the only display; an administrator can disable just `family-calendar-kiosk.service` after confirming the tablet works. Keep the application service enabled. Existing Google connections and data do not need to move to the tablet.
+
+### Touch interactions and layout
+
+- Tap any visible weekly, all-day or monthly event for title, dates/times, calendar, location and description. Tap outside the popup or Close to return; Escape also works with a keyboard. Descriptions are displayed as plain text, including any source HTML markup, rather than executing calendar content.
+- Tap a weekday/date or `+ more` for a large-button list of all events for that date, including events outside the configured weekly hours. Tap a list item for its details. Short and overlapping time-grid events remain compact to preserve accurate positioning; the date list is their easy-touch alternative.
+- Controls stays at `/control`, with its existing settings, pairing and actions. The display's labelled Controls link opens it in a separate browser tab.
+- Tablet-width layouts give more space to the calendar and use larger event text. Narrow/portrait layouts put photos below the calendar. Month view can scroll vertically to retain readable text; crowded month cells can also scroll. Pinch zoom remains available.
+- Photo rotation pauses while the tab is hidden, and returning to the page or coming back online refreshes state. Resize rendering is debounced and weekly scroll position survives normal rerenders. No framework, new dependency, database migration or additional server process is required.
+
+### Browser and wall setup
+
+Start with an updated Samsung Internet browser in landscape, normal mobile site mode and default zoom. This is a practical starting recommendation, not a hardware benchmark against Chrome. Keep one display tab and use the separate Controls tab when needed. A home-screen shortcut makes returning to the calendar easier; Samsung documents adding a bookmark shortcut through its browser menu: [Samsung home-screen guide](https://samsunginternet.github.io/docs/homescreen). Menu wording varies by browser version. A shortcut does not guarantee fullscreen, offline support or an always-on screen.
+
+The current LAN URL uses HTTP. Browser Screen Wake Lock requires a secure context, so the tablet cannot rely on a web wake lock at this address: [Screen Wake Lock API](https://developer.mozilla.org/en-US/docs/Web/API/Screen_Wake_Lock_API). Choose the tablet's available screen-timeout/power settings first; unattended all-day use may need a dedicated kiosk setup. Exact instructions require the tablet model, Android version and browser version. App overnight dimming only dims the page; it does not control tablet power. HTTPS plus an optional wake-lock/fullscreen button is a possible later enhancement, as are kiosk startup recovery and device-local photo visibility preferences.
+
+The tablet needs Wi-Fi connectivity to the Pi even if the internet is down. The Pi caches calendar data and serves photos locally, but this page is not an offline-installed PWA. Keep the Pi service on the private LAN as already documented.
+
+### Verification and remaining device checks
+
+Development checks on 2026-09-07: `npm run check` and all 18 `npm test` tests passed. In-app Chromium browser checks used 1280×800 landscape, 800×1280 portrait and 1024×768 landscape viewports. Verified event location/date/time details, outside dismissal, Close, Escape, day-list selection and month event selection. These were mouse/keyboard interactions at tablet viewport sizes, not physical Android touch emulation or Samsung hardware performance measurements.
+
+On the actual tablet, check tap accuracy, scrolling, pinch zoom, rotation, screen timeout, Wi-Fi drop/recovery, return from sleep, overnight dimming and Pi reboot recovery. Verify long descriptions and crowded days with real calendar content. Confirm Controls still updates the display from its separate tab. Measure sustained tablet/Pi resource use before claiming this is the most efficient configuration for the particular device. Publish/install this release using the existing update workflow; local changes alone do not update the Pi.
