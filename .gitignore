@@ -11,5 +11,6 @@ data/*
 *.sqlite-wal
 *.log
 coverage/
+.meal-preview-data/
 __pycache__/
 *.pyc

@@ -1,5 +1,8 @@
 # Raspberry Pi family calendar
 
+Meal-planner development is isolated on `codex/meal-planner`, disabled by default.
+See [the safe preview and branch guide](MEAL_PLANNER_PREVIEW.md) before testing it.
+
 A private, Pi-friendly household display: a readable seven-day calendar beside a rotating family-photo area, with a full-month view and phone controls on the same home Wi-Fi.
 
 The first release is intentionally small. It uses one Node.js service, the built-in SQLite driver, plain browser assets, and `sharp` only for safe server-side photo processing. There is no frontend build step, container, paid cloud service, custom voice assistant, or Spotify player.

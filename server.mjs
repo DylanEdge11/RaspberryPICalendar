@@ -8,6 +8,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { createPhotosPicker } from "./photos-picker.mjs";
 import { createUpdateControl } from "./phone-updates.mjs";
+import { createMealStore } from './meals.mjs';
 
 import { createWeatherService } from "./weather.mjs";
 const weather = createWeatherService();
@@ -85,6 +86,7 @@ await initializeStorage();
 const db = new DatabaseSync(DB_PATH);
 initializeDatabase();
 initializeDefaultSettings();
+const meals = process.env.MEALS_ENABLED === '1' ? createMealStore(db, () => broadcastState()) : null;
 try { fs.chmodSync(DB_PATH, 0o600); } catch { /* Windows does not expose POSIX modes. */ }
 
 let sharp = null;
@@ -444,6 +446,7 @@ function getStatePayload() {
   return {
     mode: APP_MODE,
     timezone: TIMEZONE,
+    meals_enabled: Boolean(meals),
     today: todayKey(),
     settings,
     period: getPeriodInfo(settings),
@@ -1129,6 +1132,27 @@ async function serveMedia(res, url) {
 async function handleRequest(req, res) {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
   const method = req.method || "GET";
+
+  if (url.pathname === '/meals') {
+    if (!meals) throw httpError(404, 'Meal planning is not enabled on this installation.');
+    return serveStatic(res, 'meals.html');
+  }
+  if (url.pathname.startsWith('/api/meals/')) {
+    if (!meals) throw httpError(404, 'Meal planning is not enabled.');
+    if (method === 'GET' && url.pathname === '/api/meals/display') return sendJson(res, 200, meals.summary(todayKey()));
+    const session = requireAdmin(req);
+    if (method === 'GET' && url.pathname === '/api/meals/state') return sendJson(res, 200, meals.state(url.searchParams.get('week')));
+    if (method !== 'POST') throw httpError(405, 'Method not allowed.');
+    if (phoneUpdates.busy()) throw httpError(503, 'Application update in progress. Your draft has not been saved.');
+    // Same-origin checks supplement the existing pairing cookie for new mutations.
+    if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}` && req.headers.origin !== `https://${req.headers.host}`) throw httpError(403, 'Use the planner on this server to save changes.');
+    const input = await readJson(req);
+    const action = url.pathname.slice('/api/meals/'.length);
+    const owner = createHash('sha256').update(session.token).digest('hex');
+    const handlers = { settings: () => meals.saveSettings(input), favourite: () => meals.saveMeal(input), plan: () => meals.savePlan(input), review: () => meals.review(input, owner), transfer: () => meals.transfer(input, owner) };
+    if (!handlers[action]) throw httpError(404, 'Not found');
+    return sendJson(res, 200, handlers[action]());
+  }
 
   if (url.pathname === '/api/system/update') {
     requireAdmin(req);

@@ -1,0 +1,11 @@
+.dinner-bar { display: flex; align-items: center; gap: 12px; flex: 0 0 58px; min-height: 0; max-height: 58px; overflow: hidden; background: #e8eee2; color: #294b38; border: 1px solid #c5d1bc; border-radius: 12px; padding: 5px 10px; }
+.dinner-bar button { min-height: 44px; background: transparent; color: #294b38; border: 0; cursor: pointer; font: inherit; }
+.dinner-tonight { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 38%; text-align: left; }
+.dinner-tonight span { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+.dinner-tonight strong { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 16px; }
+.dinner-mini { flex: 1; display: flex; min-width: 0; gap: 8px; overflow: hidden; }
+.dinner-mini span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 10px; }
+.dinner-mini b { display: block; font-size: 11px; }
+.dinner-dialog { width: min(680px,94vw); max-height: 85vh; overflow: auto; padding: 22px; border: 1px solid #c5d1bc; border-radius: 16px; background: #fffef8; color: #294b38; }
+.dinner-dialog article { border-top: 1px solid #d8dfd2; padding: 12px 0; } .dinner-dialog button, .dinner-dialog a { display: inline-block; min-height: 44px; padding: 10px; } .dinner-dialog::backdrop { background: #172d3866; }
+@media(max-width:1000px) { .dinner-mini { display: none; } .dinner-tonight { max-width: none; flex: 1; } }
