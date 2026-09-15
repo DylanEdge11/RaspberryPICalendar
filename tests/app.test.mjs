@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, access, readFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import os from "node:os";
 import path from "node:path";
 import { once } from "node:events";
@@ -76,12 +77,22 @@ after(async () => {
 });
 
 test("management state is protected and phone view changes are persisted", async () => {
+  assert.equal((await fetch(`${baseUrl}/api/google/color`, { method: 'POST' })).status, 401);
+  for (const method of ['GET', 'POST']) assert.equal((await fetch(`${baseUrl}/api/system/update`, { method })).status, 401);
+  for (const [method, route] of [["GET", "status"], ["GET", "connect"], ["POST", "start"], ["POST", "check"], ["POST", "import"], ["POST", "cancel"], ["DELETE", "connection"]]) {
+    assert.equal((await fetch(`${baseUrl}/api/google-photos/${route}`, { method, redirect: "manual" })).status, 401);
+  }
+  const deniedDelete = await fetch(`${baseUrl}/api/google/accounts/anything`, { method: "DELETE" });
+  assert.equal(deniedDelete.status, 401);
   const unauthenticated = await fetch(`${baseUrl}/api/state`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ view: "month" }) });
   assert.equal(unauthenticated.status, 401);
 
   const login = await fetch(`${baseUrl}/api/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pin: "1234" }) });
   assert.equal(login.status, 200);
+  assert.match(login.headers.get("set-cookie"), /SameSite=Lax/);
   cookie = login.headers.get("set-cookie").split(";", 1)[0];
+  assert.equal((await fetch(`${baseUrl}/api/system/update`, { method: 'POST', headers: { Cookie: cookie } })).status, 409);
+  assert.equal((await fetch(`${baseUrl}/api/google-photos/start`, { method: "POST", headers: { Cookie: cookie } })).status, 409, "demo never calls Google");
 
   const changed = await fetch(`${baseUrl}/api/state`, { method: "POST", headers: { "Content-Type": "application/json", Cookie: cookie }, body: JSON.stringify({ view: "month" }) });
   assert.equal(changed.status, 200);
@@ -98,6 +109,90 @@ test("management state is protected and phone view changes are persisted", async
   assert.equal((await previousMonth.json()).state.settings.anchor_date, "2026-02-28");
 });
 
+test('weekly hours validate and persist without changing month ranges', async () => {
+  const save = (body) => fetch(`${baseUrl}/api/state`, { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify(body) });
+  const initial = await (await fetch(`${baseUrl}/api/state`)).json();
+  assert.equal(initial.settings.weekly_start_hour, 6);
+  assert.equal(initial.settings.weekly_end_hour, 22);
+  for (const body of [{ weekly_start_hour: -1 }, { weekly_end_hour: 25 }, { weekly_start_hour: 6.5 }, { weekly_end_hour: '24' }, { weekly_start_hour: 22 }, { weekly_end_hour: 5 }]) {
+    assert.equal((await save(body)).status, 400);
+  }
+  const changed = await (await save({ weekly_start_hour: 0, weekly_end_hour: 24 })).json();
+  assert.deepEqual(changed.state.period, initial.period);
+  const disk = new DatabaseSync(path.join(childDataDir, 'calendar.sqlite'));
+  assert.equal(disk.prepare("SELECT value FROM settings WHERE key='weekly_start_hour'").get().value, '0');
+  assert.equal(disk.prepare("SELECT value FROM settings WHERE key='weekly_end_hour'").get().value, '24');
+  disk.close();
+  assert.equal((await save({ weekly_start_hour: 23, weekly_end_hour: 24 })).status, 200);
+});
+
+test("reconnecting preserves selection; hidden events stay cached; disconnect removes only its account", async () => {
+  const database = new DatabaseSync(path.join(testDataDir, "calendar.sqlite"));
+  const originalFetch = globalThis.fetch;
+  let identity = "one@example.test";
+  globalThis.fetch = async (url) => {
+    assert.equal(String(url), "https://www.googleapis.com/calendar/v3/calendars/primary");
+    return new Response(JSON.stringify({ id: identity }), { status: 200 });
+  };
+  try {
+    const token = { access_token: "test-access", refresh_token: "test-refresh", expires_at: Date.now() + 3600000 };
+    const first = await app.saveGoogleConnection(token);
+    database.prepare(`INSERT INTO calendar_sources(id, account_id, calendar_id, summary, enabled, updated_at)
+      VALUES('source-one', ?, 'calendar-one', 'Test calendar', 1, '2026-09-01')`).run(first.id);
+    database.prepare(`INSERT INTO calendar_events(account_id, calendar_id, event_id, title, all_day, start_date, end_date, updated_at)
+      VALUES(?, 'calendar-one', 'event-one', 'Test event', 1, '2026-09-07', '2026-09-08', '2026-09-01')`).run(first.id);
+    assert.equal(app.getCachedEvents("2026-09-07", "2026-09-14").length, 1);
+    database.prepare("INSERT INTO settings(key,value) VALUES('calendar_color:source-one','#112233')").run();
+    database.prepare("UPDATE calendar_sources SET color='#abcdef'").run();
+    assert.equal(app.getCachedEvents('2026-09-07', '2026-09-14')[0].calendar_color, '#112233', 'Google source refresh cannot overwrite local colour');
+    database.prepare("DELETE FROM settings WHERE key='calendar_color:source-one'").run();
+    assert.equal(app.getCachedEvents('2026-09-07', '2026-09-14')[0].calendar_color, '#abcdef', 'reset uses current source colour');
+    database.prepare("UPDATE calendar_sources SET enabled=0 WHERE account_id=?").run(first.id);
+    assert.equal(app.getCachedEvents("2026-09-07", "2026-09-14").length, 0);
+    assert.equal(database.prepare("SELECT COUNT(*) AS n FROM calendar_events").get().n, 1);
+    const again = await app.saveGoogleConnection({ access_token: "renewed", expires_at: token.expires_at });
+    assert.equal(again.id, first.id);
+    assert.equal(database.prepare("SELECT enabled FROM calendar_sources").get().enabled, 0);
+    assert.equal(JSON.parse(await readFile(path.join(testDataDir, first.token_path))).refresh_token, "test-refresh");
+    database.prepare("UPDATE google_accounts SET email=NULL WHERE id=?").run(first.id);
+    assert.equal((await app.saveGoogleConnection(token)).id, first.id, "legacy connection is reused");
+    identity = "two@example.test";
+    const second = await app.saveGoogleConnection(token);
+    assert.notEqual(second.id, first.id);
+    app.disconnectGoogleAccount(first.id);
+    assert.equal(database.prepare("SELECT COUNT(*) AS n FROM calendar_events").get().n, 0);
+    assert.equal(database.prepare("SELECT COUNT(*) AS n FROM calendar_sources").get().n, 0);
+    assert.equal(database.prepare("SELECT COUNT(*) AS n FROM google_accounts").get().n, 1);
+    await assert.rejects(access(path.join(testDataDir, first.token_path)));
+    await access(path.join(testDataDir, second.token_path));
+    app.disconnectGoogleAccount(second.id);
+  } finally {
+    globalThis.fetch = originalFetch;
+    database.close();
+  }
+});
+
+test('calendar colour API validates, persists, isolates and resets overrides', async () => {
+  const disk = new DatabaseSync(path.join(childDataDir, 'calendar.sqlite'));
+  disk.prepare("INSERT INTO google_accounts(id,label,token_path,created_at) VALUES('colour-test','Test','secrets/test.json','2026-09-01')").run();
+  for (const id of ['colour-a', 'colour-b']) disk.prepare("INSERT INTO calendar_sources(id,account_id,calendar_id,summary,color,enabled,updated_at) VALUES(?,'colour-test',?,'Test','#aabbcc',1,'2026-09-01')").run(id,id);
+  const save = (id, color) => fetch(`${baseUrl}/api/google/color`, { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ id, color }) });
+  assert.equal((await save('missing','#123456')).status,404);
+  for (const value of ['red','#fff','<script>',7]) assert.equal((await save('colour-a',value)).status,400);
+  const payload = await (await save('colour-a','#123ABC')).json();
+  assert.equal(payload.sources.find(s=>s.id==='colour-a').color,'#123abc');
+  assert.equal(payload.sources.find(s=>s.id==='colour-b').color,'#aabbcc');
+  assert.equal(disk.prepare("SELECT value FROM settings WHERE key='calendar_color:colour-a'").get().value,'#123abc');
+  disk.close();
+  const reopened = new DatabaseSync(path.join(childDataDir, 'calendar.sqlite'));
+  assert.equal(reopened.prepare("SELECT value FROM settings WHERE key='calendar_color:colour-a'").get().value,'#123abc');
+  const reset = await (await save('colour-a',null)).json();
+  assert.equal(reset.sources.find(s=>s.id==='colour-a').color,'#aabbcc');
+  reopened.prepare("DELETE FROM calendar_sources WHERE account_id='colour-test'").run();
+  reopened.prepare("DELETE FROM google_accounts WHERE id='colour-test'").run();
+  reopened.close();
+});
+
 test("event API returns the requested range and no live account claim in demo mode", async () => {
   const state = await (await fetch(`${baseUrl}/api/state`)).json();
   const events = await (await fetch(`${baseUrl}/api/events?start=${state.period.start}&end=${state.period.end}`)).json();
@@ -105,6 +200,31 @@ test("event API returns the requested range and no live account claim in demo mo
   assert.equal(events.range.start, state.period.start);
   assert.ok(Array.isArray(events.events));
   assert.ok(events.events.every((event) => event.calendar_color.startsWith("#")));
+});
+
+test("shared photo processing accepts PNG, rejects duplicates, serves JPEG and removes the photo", async () => {
+  const sharp = (await import("sharp")).default;
+  const data = await sharp({ create: { width: 8, height: 6, channels: 3, background: "#123456" } }).png().toBuffer();
+  const login = await fetch(`${baseUrl}/api/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pin: "1234" }) });
+  const photoCookie = login.headers.get("set-cookie").split(";", 1)[0];
+  const upload = async () => {
+    const form = new FormData();
+    form.append("photo", new Blob([data], { type: "image/png" }), "test-photo.png");
+    return fetch(`${baseUrl}/api/photos`, { method: "POST", headers: { Cookie: photoCookie }, body: form });
+  };
+  const response = await upload();
+  assert.equal(response.status, 201);
+  const { photo } = await response.json();
+  try {
+    assert.equal((await upload()).status, 409);
+    const displayed = await fetch(`${baseUrl}${photo.url}`);
+    assert.equal(displayed.status, 200);
+    assert.equal(displayed.headers.get("content-type"), "image/jpeg");
+    const metadata = await sharp(Buffer.from(await displayed.arrayBuffer())).metadata();
+    assert.equal(metadata.width, 8);
+  } finally {
+    assert.equal((await fetch(`${baseUrl}/api/photos/${photo.id}`, { method: "DELETE", headers: { Cookie: photoCookie } })).status, 200);
+  }
 });
 
 test("production mode does not fall back to demo events without a Google account", async () => {

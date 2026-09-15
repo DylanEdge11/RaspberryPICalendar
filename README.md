@@ -1,5 +1,8 @@
 # Raspberry Pi family calendar
 
+Meal-planner development is isolated on `codex/meal-planner`, disabled by default.
+See [the safe preview and branch guide](MEAL_PLANNER_PREVIEW.md) before testing it.
+
 A private, Pi-friendly household display: a readable seven-day calendar beside a rotating family-photo area, with a full-month view and phone controls on the same home Wi-Fi.
 
 The first release is intentionally small. It uses one Node.js service, the built-in SQLite driver, plain browser assets, and `sharp` only for safe server-side photo processing. There is no frontend build step, container, paid cloud service, custom voice assistant, or Spotify player.
@@ -82,6 +85,8 @@ GOOGLE_REDIRECT_URI=http://localhost:8080/api/google/callback
 Production refuses to start without `ADMIN_PIN`. Port 8080 is plain HTTP on the local network, and display/event/photo reads are intentionally unauthenticated so the kiosk can operate without a login. Never add a router port-forward for it; if the Pi firewall is enabled, restrict the port to the home subnet. This first deployment is intended to stay private to the home network; the app has no TLS termination or public-hosting configuration.
 
 ### Google Calendar setup
+
+**Calendar colours:** In paired phone controls → Calendars, use the **Colour** picker beside each calendar. Choices save automatically and update the weekly/monthly display without a Google sync. **Use Google colour** removes your local choice. This changes only the household display, not the colours in Google Calendar. Overrides persist in SQLite through restarts and Google refreshes and are included in backups. Disconnecting an account removes its local colour choices. No schema migration or updater-helper installation is needed for this release.
 
 1. In Google Cloud, create/select a project and enable Google Calendar API.
 2. Configure the OAuth consent screen and create a Web application OAuth client. Add the exact `GOOGLE_REDIRECT_URI` to its authorized redirect URIs. Google permits an `http://localhost` callback for a flow started in the Pi's own browser. A phone-initiated flow requires an exact HTTPS callback on a domain you control; a `.local` hostname over HTTP is not a valid general web-app redirect.
@@ -167,7 +172,7 @@ If the Pi desktop uses a user systemd session instead of a system service, copy 
 
 ```sh
 cd /opt/family-calendar
-sudo ./scripts/backup.sh
+sudo bash scripts/backup.sh
 sudo git fetch origin
 sudo git pull --ff-only origin main
 sudo npm ci --omit=dev
@@ -176,6 +181,40 @@ curl http://127.0.0.1:8080/api/health
 ```
 
 `APP_DATA_DIR` is outside the checkout, so normal code updates do not remove photos, settings, event cache, or Google tokens. Never run a checkout/reset command against the data directory.
+
+### Phone-controlled updates (one-time Pi setup)
+
+Public GitHub does not automatically update the Pi. After enabling this feature, use **Application → Update application** on the paired phone controls to install a published release.
+
+On the Pi, run each line separately and stop if any command fails:
+
+```sh
+cd /opt/family-calendar
+sudo bash scripts/backup.sh
+sudo git pull --ff-only origin main
+sudo bash scripts/install-phone-updates.sh
+sudo systemctl restart family-calendar.service
+```
+
+Refresh the phone controls. Future updates require tapping **Update application** and confirming. Keep the Pi powered on; backups and installation can take several minutes. The display reloads after a backend restart; phone controls may require pairing again. If there is no newer release, the app stays running.
+
+Requirements: the documented root-owned checkout, `/var/lib/family-calendar` data directory, port 8080, production service, Python 3.11+, and `/usr/bin` Node/npm/Git. This targets the owner's confirmed ARM64 Trixie installation. The checkout must be clean and its origin must be `https://github.com/DylanEdge11/RaspberryPICalendar.git`. Updates follow `main`, reject divergent history, and leave a detached release commit. On the computer, test, commit, and push before an update exists for the Pi.
+
+The paired endpoint writes only a fixed request marker. A root-owned systemd path/service runs a fixed helper outside the checkout; the web service receives no general sudo permission. npm lifecycle scripts are disabled; syntax and sharp smoke checks run as the application user. Automatic updates require prebuilt ARM dependencies; source-build-only installations need manual maintenance. Re-run the installer when a release changes the helper or its systemd units; the phone deliberately does not replace its own privileged helper.
+
+Before replacing code, the updater stops the app and saves SQLite, photos, tokens, configuration, the previous commit and checksums to a protected directory under `/var/backups/family-calendar`. These backups contain secrets. They are not uploaded or automatically pruned; monitor disk space and retain a known-good backup. Ordinary code updates preserve household data; this release makes no schema change.
+
+If installation or health checks fail, the helper attempts to reinstall the previous commit only when the database schema version is unchanged. If the version changed, it leaves the app stopped for manual recovery using the backup. Power loss or the 15-minute service timeout can interrupt recovery; automatic rollback is not guaranteed. For stuck progress, inspect on the Pi:
+
+```sh
+sudo systemctl status family-calendar-update.path family-calendar-update.service
+sudo journalctl -u family-calendar-update.service -n 60 --no-pager
+sudo cat /var/lib/family-calendar-updater/status.json
+```
+
+Preserve the recorded backup and follow rollback/restore below before restarting. Once recovery is complete, an administrator can run `sudo systemctl start family-calendar-update.service` to retry and replace stale progress. A failed app cannot show phone controls, so terminal access remains necessary for exceptional recovery.
+
+Developer verification also includes `python3 -m unittest discover -s tests -p test_phone_update.py` and `bash -n scripts/install-phone-updates.sh`. The updater's success/failure paths are mocked; actual systemd execution, ARM dependency permissions, backups and rollback must be verified on the Pi.
 
 ### Rollback and migrations
 
@@ -194,27 +233,62 @@ The schema has a `schema_version` setting and is currently version 1. Future mig
 
 ## Backups and restore
 
+Calendar connection maintenance: use **Disconnect account** in phone controls to remove an extra connection. This deletes only that connection's local token and cached calendars/events, never Google events or other connections. Unchecking hides cached events immediately, even during an internet outage. Reconnecting reuses the primary calendar identity and preserves selections, using the existing read-only scope ([Google endpoint](https://developers.google.com/workspace/calendar/api/v3/reference/calendars/get)). Existing duplicates require explicit removal. If an unidentified legacy connection has expired, disconnect it before reconnecting. Disconnect during active sync asks you to retry shortly.
+
+This update makes no schema changes. Reload the display and controls once after updating. Normal rollback uses the previous commit; restoring a removed connection requires the protected data backup.
+
 `scripts/backup.sh` makes a SQLite-consistent copy, writes a portable checksum file, and archives `photos/` and `secrets/` under `/var/backups/family-calendar` by default. It requires the `sqlite3` command. Protect the backup because it contains family photos and Google refresh tokens:
 
 ```sh
-sudo BACKUP_ROOT=/var/backups/family-calendar ./scripts/backup.sh
+sudo BACKUP_ROOT=/var/backups/family-calendar bash scripts/backup.sh
 ```
 
 Also back up `/etc/family-calendar/calendar.env` and the Google client JSON through a separately protected method. The app does not upload backups anywhere.
 
 To restore, stop the service, preserve the current data directory as a safety copy, verify the backup checksum, restore `calendar.sqlite` and the `photos/` and `secrets/` archives into `APP_DATA_DIR`, remove any stale `calendar.sqlite-wal` and `calendar.sqlite-shm` files, fix ownership, and start the matching application commit. Verify the health endpoint, photo list, settings, and calendar connection before removing the safety copy. The restore operation is intentionally manual because overwriting household data is a destructive action.
 
+## Weekly calendar hours
+
+In phone controls → **Display settings**, choose **Weekly start time** and **Weekly end time**, then **Save settings**. Changes appear immediately on the display and persist in SQLite. Whole hours are supported, from 12 AM through midnight at the end of the day. To include an 11 PM event, choose **Midnight (end of day)** as the end time. The default remains 6 AM–10 PM (the last hourly label is 9 PM).
+
+End must be later than start; an overnight range cannot wrap across calendar days. Choose a full 12 AM–midnight day if needed. Month view and all-day events are unaffected. Timed events outside the selected range are hidden; crossing events are clipped to the range. Wider ranges compress hourly rows to fit the display, and short event blocks show their title with full time in the hover tooltip. Small screens may still scroll. Quiet hours are separate and can dim the display even when late calendar hours are selected.
+
+This release adds settings only, with no schema migration or privileged updater changes. Install through **Application → Update application** after the one-time updater setup. No new Google authorization or Pi terminal setup is required. Older code can ignore these settings on rollback; photos and connections remain outside the checkout.
+
 ## Photo handling
+
+Photo labels (the filename/counter overlay) are hidden by default for family photos. In phone controls → Display settings, enable **Show photo labels** and save to restore them. The preference is stored on the Pi and updates the display immediately; demo images always keep their sample label.
 
 Supported inputs are JPEG, PNG, GIF, WebP, AVIF, and HEIC/HEIF only when the Pi's installed `sharp`/libvips build can decode them. The server checks file signatures, rejects unsupported formats, rejects duplicates by SHA-256, limits requests to 20 MB, rejects decoded images over 40 million pixels, corrects EXIF orientation, and writes a display JPEG no larger than 1920×1080. Server-side processing is serialized, and the default collection limit is 500 photos or 2 GiB of original files; adjust the limits only after measuring storage and memory.
 
 iPhone users should try HEIC first after installing the Pi dependencies. If the installed ARM image stack cannot decode it, the control page returns a clear error; export/share as JPEG or PNG rather than assuming every iPhone photo is JPEG. Existing uploaded photos are local and continue cycling without internet access.
 
-## Google Photos decision (researched 2026-09-06)
+## Google Photos import (optional)
 
 Google changed the Photos APIs in 2025. The Library API now focuses on content created by the app, and the old broad `photoslibrary.readonly`/sharing scopes are no longer the dependable way to enumerate a user's existing daily album. The supported Picker API lets a user explicitly select photos from their library, but it is an interactive selection flow with a session, not a silent “watch this album forever” feed. Google also says picked media URLs are temporary and should not be cached as a permanent source.
 
-That makes a background sync of the household's existing Google Photos album a poor dependency for this private frame. The first version therefore uses wireless phone upload. A future optional Picker import could be added after the core build is stable; it would require an explicit selection on the phone and downloading the selected media into the Pi's own photo store. Fragile scraping, public-album exposure, and repeated manual credential extraction are deliberately out of scope.
+**Import from Google Photos** is implemented in phone controls using the Picker API. It imports selected photos rather than subscribing to an album. Search by album title in Google's picker, then select photos; one-click whole-album selection is not promised. Google's Ambient API requires partner acceptance and is not used here.
+
+One-time setup:
+
+1. In the same Google Cloud project as Calendar, enable **Google Photos Picker API**.
+2. In **Google Auth Platform → Data Access**, add `https://www.googleapis.com/auth/photospicker.mediaitems.readonly`. Keep the Calendar permission. If the project is in Testing, add the Photos account as a test user.
+3. Keep the existing web client JSON and `GOOGLE_REDIRECT_URI=http://localhost:8080/api/google/callback`; no new redirect or environment variable is needed.
+4. On the Pi, open `http://localhost:8080/control` in Chromium, enter the PIN, and click **Connect Google Photos**. Grant the selected-photos permission. This separate connection does not add a Calendar account.
+
+Regular phone imports:
+
+1. Open the Pi controls on home Wi-Fi and click **Choose from Google Photos**, then **Open Google Photos selection**.
+2. Sign in with the same Photos account authorized on the Pi. Search the album title, select photos, and tap **Done**.
+3. Return to the controls tab and click **Import selected photos** when ready. The Pi downloads and saves the photos; the phone can sleep after import starts.
+
+Limits and privacy: one shared household Photos connection and import at a time, up to 100 selections per batch; videos skipped. Photos are requested at up to 1920×1080 with a 20 MB download limit, existing decoded-pixel/storage quotas, and serialized image processing. Imported files are display-sized copies rather than an archive of camera originals. Repeated Google media IDs are skipped even after restart; exact byte duplicates are also rejected. Photos remain on the Pi and cycle offline. Temporary Google URLs are not used as permanent slideshow URLs. Copies are visible on the private LAN like ordinary uploads; never expose this service publicly.
+
+The separate refresh token is stored at `APP_DATA_DIR/secrets/google-photos-picker.json`, covered by existing private permissions/backups. Paired household controls can initiate imports. **Disconnect Google Photos** removes the local connection; imported copies stay until removed from the photo list. Google photos are never deleted. No extra subscription or automatic album watch. Testing-mode access can expire after seven days; reconnect on the Pi when required.
+
+Selection sessions/progress are in memory. If the Pi restarts during a selection/import, saved photos remain; select the unfinished batch again and duplicates will be skipped. Expired selections can be cancelled/replaced. Failed Google session cleanup is reported and Google eventually expires it. No database migration; rollback to the prior commit preserves household data.
+
+Verification: mocked Google session/import tests and real local image-processing tests pass. Controls and the simulated import flow were inspected in headless Edge at 390×844, 412×915 and 1920×1080 without page errors or horizontal overflow. Live Photos consent/import, actual mobile browsers and Pi import memory require owner verification.
 
 Primary references: [Google Calendar Node.js quickstart](https://developers.google.com/workspace/calendar/api/quickstart/nodejs), [Calendar events.list](https://developers.google.com/calendar/api/v3/reference/events/list), [Google OAuth web-server flow](https://developers.google.com/identity/protocols/oauth2/web-server), [Google Photos API updates](https://developers.google.com/photos/support/updates), [Photos Picker API](https://developers.google.com/photos/picker/guides/sessions), and [Photos Library listing guidance](https://developers.google.com/photos/library/guides/list).
 
@@ -239,3 +313,43 @@ Not claimed until performed on the actual hardware/accounts:
 - Raspberry Pi OS architecture-specific install, `sharp` ARM decoding, memory use with Chromium, kiosk restart after reboot, monitor behavior, or performance at a resolution other than the initial 1080p target.
 - Live Google OAuth, personal/shared/additional-account calendars, recurring exceptions from a real account, outage/recovery against Google, or real iPhone HEIC uploads.
 - Nest speaker voice commands or any voice-controlled screen switching. No voice route is included in this release.
+
+## Samsung tablet display (touch release)
+
+The Pi can run as a headless hub: keep `family-calendar.service` running and open `http://<Pi-LAN-address>:8080/` on the tablet on the same home Wi-Fi. Reserve the Pi's LAN address in the router so bookmarks remain valid. The Pi needs no attached screen for normal calendar operation. Its optional Chromium kiosk service is unnecessary when the tablet is the only display; an administrator can disable just `family-calendar-kiosk.service` after confirming the tablet works. Keep the application service enabled. Existing Google connections and data do not need to move to the tablet.
+
+### Touch interactions and layout
+
+- Tap any visible weekly, all-day or monthly event for title, dates/times, calendar, location and description. Tap outside the popup or Close to return; Escape also works with a keyboard. Descriptions are displayed as plain text, including any source HTML markup, rather than executing calendar content.
+- Tap a weekday/date or `+ more` for a large-button list of all events for that date, including events outside the configured weekly hours. Tap a list item for its details. Short and overlapping time-grid events remain compact to preserve accurate positioning; the date list is their easy-touch alternative.
+- Controls stays at `/control`, with its existing settings, pairing and actions. The display's labelled Controls link opens it in a separate browser tab.
+- Tablet-width layouts give more space to the calendar and use larger event text. Narrow/portrait layouts put photos below the calendar. Month view can scroll vertically to retain readable text; crowded month cells can also scroll. Pinch zoom remains available.
+- Photo rotation pauses while the tab is hidden, and returning to the page or coming back online refreshes state. Resize rendering is debounced and weekly scroll position survives normal rerenders. No framework, new dependency, database migration or additional server process is required.
+
+### Browser and wall setup
+
+Start with an updated Samsung Internet browser in landscape, normal mobile site mode and default zoom. This is a practical starting recommendation, not a hardware benchmark against Chrome. Keep one display tab and use the separate Controls tab when needed. A home-screen shortcut makes returning to the calendar easier; Samsung documents adding a bookmark shortcut through its browser menu: [Samsung home-screen guide](https://samsunginternet.github.io/docs/homescreen). Menu wording varies by browser version. A shortcut does not guarantee fullscreen, offline support or an always-on screen.
+
+The current LAN URL uses HTTP. Browser Screen Wake Lock requires a secure context, so the tablet cannot rely on a web wake lock at this address: [Screen Wake Lock API](https://developer.mozilla.org/en-US/docs/Web/API/Screen_Wake_Lock_API). Choose the tablet's available screen-timeout/power settings first; unattended all-day use may need a dedicated kiosk setup. Exact instructions require the tablet model, Android version and browser version. App overnight dimming only dims the page; it does not control tablet power. HTTPS plus an optional wake-lock/fullscreen button is a possible later enhancement, as are kiosk startup recovery and device-local photo visibility preferences.
+
+The tablet needs Wi-Fi connectivity to the Pi even if the internet is down. The Pi caches calendar data and serves photos locally, but this page is not an offline-installed PWA. Keep the Pi service on the private LAN as already documented.
+
+### Verification and remaining device checks
+
+Development checks on 2026-09-07: `npm run check` and all 18 `npm test` tests passed. In-app Chromium browser checks used 1280×800 landscape, 800×1280 portrait and 1024×768 landscape viewports. Verified event location/date/time details, outside dismissal, Close, Escape, day-list selection and month event selection. These were mouse/keyboard interactions at tablet viewport sizes, not physical Android touch emulation or Samsung hardware performance measurements.
+
+On the actual tablet, check tap accuracy, scrolling, pinch zoom, rotation, screen timeout, Wi-Fi drop/recovery, return from sleep, overnight dimming and Pi reboot recovery. Verify long descriptions and crowded days with real calendar content. Confirm Controls still updates the display from its separate tab. Measure sustained tablet/Pi resource use before claiming this is the most efficient configuration for the particular device. Publish/install this release using the existing update workflow; local changes alone do not update the Pi.
+
+### Tablet screen-fit correction
+
+The wall display now uses the available viewport height (100dvh, with a 100vh fallback). Removed the tall minimum card/month-row sizing that forced page scrolling. Landscape keeps photos beside the calendar; portrait allocates a smaller photo strip below it. Compact headers preserve calendar space. All six month rows fit; crowded day cells and event-detail dialogs can still scroll, and tapping a date opens the full day list. Controls remains separate. This supersedes the earlier note that month view requires page scrolling.
+
+Verified in the development browser: week and month at 1024×600, and month at 800×1280, have document height equal to viewport height. Syntax and diff checks passed. Physical SM-T510 verification and Pi installation remain pending.
+
+## Weather widget
+
+The bottom-right widget below the Family Album shows current weather in Celsius (Regina by default). In phone Controls, set **Weather location** to a city, optionally followed by its province or country, and choose **Hourly today** or **Next 7 days**, then save settings. Tap the weather widget to open that forecast; Close or Escape returns to the calendar. Forecast times use the selected location’s timezone and always follow today, independently of calendar navigation.
+
+Weather uses [Open-Meteo](https://open-meteo.com/) forecast and geocoding APIs without an API key. The Pi needs outbound HTTPS access to api.open-meteo.com and geocoding-api.open-meteo.com. Forecasts are cached in memory for 15 minutes; temporary failures show the last successful forecast with an out-of-date label. After a restart without internet, weather shows unavailable until connectivity returns. City searches use the first matching location; the forecast window shows its full resolved name so you can refine ambiguous searches.
+
+Click the Family Album to open a full-screen slideshow. Pictures use the saved photo timing and fit inside the screen without cropping. Use **×**, **Back to calendar**, or Escape to return to the calendar.
