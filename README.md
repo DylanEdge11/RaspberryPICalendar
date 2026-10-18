@@ -203,6 +203,16 @@ sudo systemctl enable --now family-calendar-kiosk.service
 
 If the Pi desktop uses a user systemd session instead of a system service, copy the `ExecStart` line into that user's autostart mechanism instead. Keep the browser to one kiosk window. This template does not power the monitor off; overnight mode only dims the page. Monitor power scheduling belongs to the monitor/desktop layer and is intentionally not claimed as implemented here.
 
+## Using an iPad as the display
+
+No kiosk app is needed. On the iPad, open Safari to `http://<pi-address>:8080/`, tap **Share → Add to Home Screen**, and name it. Opening the new **Family Calendar** icon shows the display full-screen with no address bar or third-party branding (the iPad's own clock/battery strip stays). Then:
+
+- **Settings → Display & Brightness → Auto-Lock → Never**, and keep the iPad on its charger.
+- Optional, to keep it locked to the calendar: **Settings → Accessibility → Guided Access** → on, set a passcode, open the Family Calendar icon and triple-click the top (or Home) button to start. Triple-click again and enter the passcode to leave.
+- The phone controls can be added to a phone's home screen the same way (**Family Controls**); pair once more inside the home-screen app.
+
+Give the Pi a reserved IP address in the router so the home-screen icon keeps pointing at it.
+
 ## GitHub-to-Pi update workflow
 
 1. Develop on the computer in demo mode.

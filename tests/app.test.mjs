@@ -260,6 +260,22 @@ test("uploads record the camera date and get a small thumbnail for the phone lis
   assert.equal((await fetch(`${baseUrl}${photo.thumb_url}`)).status, 404);
 });
 
+test("the display can be added to an iPad home screen as a full-screen app", async () => {
+  const page = await (await fetch(`${baseUrl}/`)).text();
+  assert.match(page, /apple-mobile-web-app-capable" content="yes"/);
+  assert.match(page, /rel="apple-touch-icon" href="\/static\/icon-180.png"/);
+  const manifest = await fetch(`${baseUrl}/static/manifest.webmanifest`);
+  assert.equal(manifest.headers.get("content-type"), "application/manifest+json");
+  const body = await manifest.json();
+  assert.equal(body.start_url, "/");
+  assert.equal(body.display, "fullscreen");
+  for (const icon of ["/static/icon-180.png", ...body.icons.map((item) => item.src)]) {
+    const response = await fetch(`${baseUrl}${icon}`);
+    assert.equal(response.status, 200, icon);
+    assert.equal(response.headers.get("content-type"), "image/png");
+  }
+});
+
 test("event API returns the requested range and no live account claim in demo mode", async () => {
   const state = await (await fetch(`${baseUrl}/api/state`)).json();
   const events = await (await fetch(`${baseUrl}/api/events?start=${state.period.start}&end=${state.period.end}`)).json();
