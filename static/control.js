@@ -165,9 +165,25 @@
     dom.googleAccountList.innerHTML = app.google.accounts.map((account) => {
       const sources = app.google.sources.filter((source) => source.account_id === account.id);
       const sourceHtml = sources.length ? `<div class="calendar-source-list">${sources.map((source) => `<label class="calendar-source"><input type="checkbox" data-source-id="${escapeHtml(source.id)}" ${source.enabled ? "checked" : ""}><span class="calendar-source-dot" style="--source-color:${/^#[0-9a-f]{6}$/i.test(source.color || "") ? source.color : "#6d7bea"}"></span><span>${escapeHtml(source.summary)}</span></label>`).join("")}</div>` : `<small>No readable calendars returned yet.</small>`;
-      return `<div class="google-account"><strong>${escapeHtml(account.label)}${account.email ? ` · ${escapeHtml(account.email)}` : ""}</strong>${account.last_error ? `<small class="form-error">${escapeHtml(account.last_error)}</small>` : ""}${sourceHtml}</div>`;
+      const isService = account.id === "service-account";
+      const shareHint = isService ? `<small>Share each calendar with this address in Google Calendar, then add its ID to GOOGLE_CALENDAR_IDS.</small>` : "";
+      const removeButton = isService ? "" : `<button class="text-button" type="button" data-remove-account="${escapeHtml(account.id)}">Remove</button>`;
+      return `<div class="google-account"><strong>${escapeHtml(account.label)}${account.email ? ` · ${escapeHtml(account.email)}` : ""}</strong>${removeButton}${shareHint}${account.last_error ? `<small class="form-error">${escapeHtml(account.last_error)}</small>` : ""}${sourceHtml}</div>`;
     }).join("");
     dom.googleAccountList.querySelectorAll("[data-source-id]").forEach((input) => input.addEventListener("change", saveGoogleSources));
+    dom.googleAccountList.querySelectorAll("[data-remove-account]").forEach((button) => button.addEventListener("click", () => removeGoogleAccount(button.dataset.removeAccount)));
+  }
+
+  async function removeGoogleAccount(id) {
+    const account = app.google.accounts.find((item) => item.id === id);
+    if (!account || !window.confirm(`Remove ${account.email || account.label} and its calendars from this display?`)) return;
+    try {
+      await requestJson(`/api/google/accounts/${encodeURIComponent(id)}`, { method: "DELETE" });
+      await loadState();
+      await loadGoogle();
+    } catch (error) {
+      setMessage(dom.settingsMessage, error.message, true);
+    }
   }
 
   async function saveGoogleSources() {

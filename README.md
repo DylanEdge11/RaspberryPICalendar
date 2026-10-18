@@ -93,7 +93,34 @@ Production refuses to start without `ADMIN_PIN`. Port 8080 is plain HTTP on the 
 6. Select the calendars to display. The app requests the narrow read-only scope `https://www.googleapis.com/auth/calendar.readonly` and stores refresh tokens under `APP_DATA_DIR/secrets`.
 7. Confirm the display shows a real event and that the status pill reports a successful sync.
 
-### Stop the weekly Google re-login (required)
+### Recommended: service account (no sign-in, never expires, free)
+
+A service account is a Google identity for unattended devices. You share your calendars with its email address the same way you'd share with a family member, and the Pi reads them using a key file. There is no browser sign-in, no OAuth consent screen to publish, no website or privacy policy, and no 7-day expiry. It costs nothing: the Calendar API is free, and service accounts need no billing account.
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), use (or create) a project and make sure **Google Calendar API** is enabled (APIs & Services → Library).
+2. Go to **IAM & Admin → Service Accounts → Create service account**. Give it a name like `family-calendar-pi`. Skip the optional role and user-access steps.
+3. Open the new service account → **Keys → Add key → Create new key → JSON**. A `.json` file downloads. Treat it like a password.
+   - If key creation is blocked by an organization policy, you are in a Workspace/organization project; personal Gmail projects allow it by default.
+4. Copy the service account's email address (it looks like `family-calendar-pi@your-project.iam.gserviceaccount.com`).
+5. In Google Calendar on the web, for **each** calendar to show: **Settings and sharing → Share with specific people → Add people** → paste that email → permission **See all event details**. Repeat from each family member's Google account for their calendars.
+6. On the same settings page, scroll to **Integrate calendar** and copy the **Calendar ID**. Your main calendar's ID is your Gmail address.
+7. Put the key on the Pi and configure it:
+
+```sh
+sudo install -m 0640 -o root -g family-calendar service_account.json /etc/family-calendar/service_account.json
+sudoedit /etc/family-calendar/calendar.env
+# GOOGLE_SERVICE_ACCOUNT_KEY=/etc/family-calendar/service_account.json
+# GOOGLE_CALENDAR_IDS=you@gmail.com,partner@gmail.com,family0123456789@group.calendar.google.com
+sudo systemctl restart family-calendar.service
+```
+
+The calendars appear under **Shared calendars** on the control page and are shown by default; untick any you want hidden. If a calendar ID has not been shared yet, the control page names it. Editing `GOOGLE_CALENDAR_IDS` and restarting adds or removes calendars. Once the shared calendars show up, press **Remove** next to any old sign-in (OAuth) accounts on the control page so they stop causing "Reconnect" warnings and duplicate events.
+
+### Alternative: OAuth sign-in
+
+The original flow below signs in with each Google account in the Pi's browser. It needs the OAuth app published (which asks for a homepage and privacy policy) to avoid weekly expiry, so prefer the service account above.
+
+### Stop the weekly Google re-login (OAuth only)
 
 Google expires refresh tokens after **7 days** for any OAuth app whose publishing status is **Testing** and that requests calendar scopes. That is why the display stops syncing every week. Code cannot work around it; it is fixed in Google Cloud:
 

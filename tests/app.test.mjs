@@ -119,6 +119,15 @@ test("management state is protected and phone view changes are persisted", async
   assert.equal(todayPayload.settings.anchor_date, todayPayload.today);
 });
 
+test("removing Google accounts requires pairing and protects the service account", async () => {
+  const anonymous = await fetch(`${baseUrl}/api/google/accounts/acct_missing`, { method: "DELETE" });
+  assert.equal(anonymous.status, 401);
+  const missing = await fetch(`${baseUrl}/api/google/accounts/acct_missing`, { method: "DELETE", headers: { Cookie: cookie } });
+  assert.equal(missing.status, 404);
+  const service = await fetch(`${baseUrl}/api/google/accounts/service-account`, { method: "DELETE", headers: { Cookie: cookie } });
+  assert.equal(service.status, 400);
+});
+
 test("event API returns the requested range and no live account claim in demo mode", async () => {
   const state = await (await fetch(`${baseUrl}/api/state`)).json();
   const events = await (await fetch(`${baseUrl}/api/events?start=${state.period.start}&end=${state.period.end}`)).json();

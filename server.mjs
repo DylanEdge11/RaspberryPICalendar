@@ -4,7 +4,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { URL, URLSearchParams } from "node:url";
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createSign, randomBytes, timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
 const ROOT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -29,6 +29,12 @@ const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const COOKIE_NAME = "family_calendar_session";
 const RECONNECT_PREFIX = "Reconnect needed:";
+// A service account reads calendars shared with its email address; it needs no browser sign-in and never expires.
+const SERVICE_ACCOUNT_ID = "service-account";
+const SERVICE_ACCOUNT_KEY = process.env.GOOGLE_SERVICE_ACCOUNT_KEY || "";
+const SERVICE_CALENDAR_IDS = (process.env.GOOGLE_CALENDAR_IDS || "").split(",").map((id) => id.trim()).filter(Boolean);
+const SOURCE_COLORS = ["#6d7bea", "#e67c73", "#33b679", "#f6bf26", "#8e24aa", "#039be5", "#f4511e", "#616161"];
+const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
 const SECURITY_HEADERS = {
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
@@ -80,6 +86,7 @@ await initializeStorage();
 const db = new DatabaseSync(DB_PATH);
 initializeDatabase();
 initializeDefaultSettings();
+initializeServiceAccount();
 try { fs.chmodSync(DB_PATH, 0o600); } catch { /* Windows does not expose POSIX modes. */ }
 
 let sharp = null;
@@ -195,6 +202,37 @@ function initializeDatabase() {
 
   const version = Number(getSetting("schema_version") || 0);
   if (version < 1) setSetting("schema_version", "1");
+}
+
+function readServiceAccountKey() {
+  let key;
+  try {
+    key = JSON.parse(fs.readFileSync(path.resolve(SERVICE_ACCOUNT_KEY), "utf8"));
+  } catch {
+    throw httpError(503, "GOOGLE_SERVICE_ACCOUNT_KEY could not be read as a JSON key file");
+  }
+  if (!key.client_email || !key.private_key) throw httpError(503, "The service account key file is missing client_email or private_key");
+  return key;
+}
+
+function initializeServiceAccount() {
+  if (!SERVICE_ACCOUNT_KEY) {
+    db.prepare("DELETE FROM google_accounts WHERE id = ?").run(SERVICE_ACCOUNT_ID);
+    return;
+  }
+  let email = null;
+  try { email = readServiceAccountKey().client_email; } catch { /* The sync status reports the unreadable key. */ }
+  db.prepare(`
+    INSERT INTO google_accounts(id, label, email, token_path, created_at) VALUES(?, 'Shared calendars', ?, '', ?)
+    ON CONFLICT(id) DO UPDATE SET email = excluded.email
+  `).run(SERVICE_ACCOUNT_ID, email, new Date().toISOString());
+  // Calendars removed from GOOGLE_CALENDAR_IDS disappear from the display.
+  const keep = new Set(SERVICE_CALENDAR_IDS);
+  for (const row of db.prepare("SELECT calendar_id FROM calendar_sources WHERE account_id = ?").all(SERVICE_ACCOUNT_ID)) {
+    if (keep.has(row.calendar_id)) continue;
+    db.prepare("DELETE FROM calendar_sources WHERE account_id = ? AND calendar_id = ?").run(SERVICE_ACCOUNT_ID, row.calendar_id);
+    db.prepare("DELETE FROM calendar_events WHERE account_id = ? AND calendar_id = ?").run(SERVICE_ACCOUNT_ID, row.calendar_id);
+  }
 }
 
 function initializeDefaultSettings() {
@@ -781,7 +819,7 @@ function googleAuthorizeUrl(req, state) {
     response_type: "code",
     access_type: "offline",
     prompt: "consent",
-    scope: "https://www.googleapis.com/auth/calendar.readonly",
+    scope: CALENDAR_SCOPE,
     state
   });
   return `${client.authUri}?${params}`;
@@ -832,7 +870,30 @@ function readToken(account) {
   }
 }
 
+let serviceToken = null;
+
+async function getServiceAccessToken() {
+  if (serviceToken && serviceToken.expiresAt > Date.now() + 60_000) return serviceToken.accessToken;
+  const key = readServiceAccountKey();
+  const tokenUri = key.token_uri || "https://oauth2.googleapis.com/token";
+  const now = Math.floor(Date.now() / 1000);
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const unsigned = `${encode({ alg: "RS256", typ: "JWT" })}.${encode({ iss: key.client_email, scope: CALENDAR_SCOPE, aud: tokenUri, iat: now, exp: now + 3600 })}`;
+  const signature = createSign("RSA-SHA256").update(unsigned).sign(key.private_key, "base64url");
+  const response = await fetch(tokenUri, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: `${unsigned}.${signature}` }),
+    signal: AbortSignal.timeout(15_000)
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.access_token) throw httpError(502, `Service account sign-in failed${payload.error_description ? `: ${payload.error_description}` : ""}`);
+  serviceToken = { accessToken: payload.access_token, expiresAt: Date.now() + Number(payload.expires_in || 3600) * 1000 };
+  return serviceToken.accessToken;
+}
+
 async function getAccessToken(account) {
+  if (account.id === SERVICE_ACCOUNT_ID) return getServiceAccessToken();
   const token = readToken(account);
   if (token.access_token && Number(token.expires_at || 0) > Date.now() + 60_000) return token.access_token;
   if (!token.refresh_token) throw httpError(502, "Google authorization expired; reconnect this account");
@@ -860,6 +921,10 @@ async function googleJsonForAccount(account, url, options = {}) {
     return await googleJson(url, token, options);
   } catch (error) {
     if (error.statusCode !== 401) throw error;
+    if (account.id === SERVICE_ACCOUNT_ID) {
+      serviceToken = null;
+      return googleJson(url, await getServiceAccessToken(), options);
+    }
     const refreshed = readToken(account);
     refreshed.expires_at = 0;
     writePrivateJson(safeDataPath(account.token_path), refreshed);
@@ -950,7 +1015,28 @@ function normalizeGoogleEvent(event, color) {
   return { title: event.summary || "Untitled event", description: event.description || "", location: event.location || "", all_day: false, start_date: start.date, end_date: end.date, start_local: `${start.date}T${start.time}:00`, end_local: `${end.date}T${end.time}:00`, start_ms: startMs, end_ms: endMs, color };
 }
 
+async function refreshServiceSources(account) {
+  // Shared calendars do not appear in a service account's calendar list, so they are named in GOOGLE_CALENDAR_IDS.
+  const insert = db.prepare(`
+    INSERT INTO calendar_sources(id, account_id, calendar_id, summary, description, color, enabled, updated_at)
+    VALUES(?, ?, ?, ?, ?, ?, 1, ?)
+    ON CONFLICT(account_id, calendar_id) DO UPDATE SET summary = excluded.summary, description = excluded.description, updated_at = excluded.updated_at
+  `);
+  const failures = [];
+  for (const [index, calendarId] of SERVICE_CALENDAR_IDS.entries()) {
+    try {
+      const calendar = await googleJsonForAccount(account, `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}`);
+      insert.run(`${account.id}::${calendarId}`, account.id, calendarId, calendar.summary || calendarId, calendar.description || "", SOURCE_COLORS[index % SOURCE_COLORS.length], new Date().toISOString());
+    } catch (error) {
+      if (error.statusCode !== 404 && error.statusCode !== 403) throw error;
+      failures.push(calendarId);
+    }
+  }
+  return failures.length ? `Not shared with ${account.email || "the service account"} yet: ${failures.join(", ")}` : null;
+}
+
 async function refreshGoogleSources(account) {
+  if (account.id === SERVICE_ACCOUNT_ID) return refreshServiceSources(account);
   const payload = await googleJsonForAccount(account, "https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=reader&showHidden=false&maxResults=250");
   const now = new Date().toISOString();
   const insert = db.prepare(`
@@ -977,11 +1063,12 @@ async function syncCalendars() {
   try {
     for (const account of accounts) {
       try {
-        await refreshGoogleSources(account);
+        const warning = await refreshGoogleSources(account);
         const sources = db.prepare("SELECT * FROM calendar_sources WHERE account_id = ? AND enabled = 1").all(account.id);
         sourceCount += sources.length;
         await syncAccountSources(account, sources, range);
-        db.prepare("UPDATE google_accounts SET last_error = NULL WHERE id = ?").run(account.id);
+        db.prepare("UPDATE google_accounts SET last_error = ? WHERE id = ?").run(warning ?? null, account.id);
+        if (warning) errors.push(warning);
       } catch (error) {
         const message = error.status ? error.message : `Google sync failed for ${account.label}`;
         errors.push(message);
@@ -1144,6 +1231,17 @@ async function handleRequest(req, res) {
     requireAdmin(req);
     return sendJson(res, 200, getAccountsAndSources());
   }
+  if (method === "DELETE" && url.pathname.startsWith("/api/google/accounts/")) {
+    requireAdmin(req);
+    const accountId = decodeURIComponent(url.pathname.slice("/api/google/accounts/".length));
+    if (accountId === SERVICE_ACCOUNT_ID) throw httpError(400, "Remove GOOGLE_SERVICE_ACCOUNT_KEY from the configuration to disconnect shared calendars");
+    const account = db.prepare("SELECT * FROM google_accounts WHERE id = ?").get(accountId);
+    if (!account) throw httpError(404, "That Google account is not connected");
+    db.prepare("DELETE FROM google_accounts WHERE id = ?").run(accountId);
+    try { fs.rmSync(safeDataPath(account.token_path), { force: true }); } catch { /* The account row is already gone. */ }
+    broadcastState();
+    return sendJson(res, 200, { ok: true, ...getAccountsAndSources() });
+  }
   if (method === "POST" && url.pathname === "/api/google/sources") {
     requireAdmin(req);
     const body = await readJson(req);
@@ -1233,6 +1331,7 @@ export {
   addMonths,
   dayOfWeek,
   getPeriodInfo,
+  getServiceAccessToken,
   isDateKey,
   makeDemoEvents,
   periodContains,
