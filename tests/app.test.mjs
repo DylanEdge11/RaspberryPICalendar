@@ -223,6 +223,20 @@ test('calendar colour API validates, persists, isolates and resets overrides', a
   reopened.close();
 });
 
+test("Photo Mode zoom and return-to-calendar settings are validated and saved", async () => {
+  const post = (body) => fetch(`${baseUrl}/api/state`, { method: "POST", headers: { "Content-Type": "application/json", Cookie: cookie }, body: JSON.stringify(body) });
+  const defaults = (await (await fetch(`${baseUrl}/api/state`)).json()).settings;
+  assert.equal(defaults.photo_motion, true);
+  assert.equal(defaults.photo_mode_minutes, 30);
+  const saved = await post({ photo_motion: false, photo_mode_minutes: 0 });
+  assert.equal(saved.status, 200);
+  const settings = (await saved.json()).state.settings;
+  assert.equal(settings.photo_motion, false);
+  assert.equal(settings.photo_mode_minutes, 0);
+  assert.equal((await post({ photo_mode_minutes: 7 })).status, 400);
+  assert.equal((await post({ photo_motion: "no" })).status, 400);
+});
+
 test("event API returns the requested range and no live account claim in demo mode", async () => {
   const state = await (await fetch(`${baseUrl}/api/state`)).json();
   const events = await (await fetch(`${baseUrl}/api/events?start=${state.period.start}&end=${state.period.end}`)).json();
