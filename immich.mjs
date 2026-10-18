@@ -6,13 +6,18 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function problem(status, message) { return Object.assign(new Error(message), { status }); }
 
+// Immich's localDateTime is when the photo was taken, in the place it was taken.
+function takenAt(asset) {
+  return asset.localDateTime || asset.exifInfo?.dateTimeOriginal || asset.fileCreatedAt || null;
+}
+
 export function immichPhotoId(assetId) {
   return `photo_immich_${createHash("sha256").update(String(assetId)).digest("hex").slice(0, 32)}`;
 }
 
 // Mirrors one or more Immich albums onto the display. An Immich API key does not
 // expire, so this runs unattended: album additions appear and removals disappear.
-export function createImmichSync({ baseUrl, apiKey, albums, savePhoto, removePhoto, listPhotoIds, withSlot, fetchImpl = fetch, now = Date.now }) {
+export function createImmichSync({ baseUrl, apiKey, albums, savePhoto, removePhoto, listPhotoIds, withSlot, setTakenAt = () => {}, fetchImpl = fetch, now = Date.now }) {
   const root = String(baseUrl || "").replace(/\/+$/, "");
   const configured = Boolean(root && apiKey && albums.length);
   const skipped = new Map();
@@ -104,11 +109,16 @@ export function createImmichSync({ baseUrl, apiKey, albums, savePhoto, removePho
       let imported = 0;
       let limitError = null;
       for (const [id, asset] of wanted) {
-        if (existing.has(id) || skipped.has(id)) continue;
+        if (existing.has(id)) {
+          // Fills in the date for photos imported before dates were recorded.
+          setTakenAt(id, takenAt(asset));
+          continue;
+        }
+        if (skipped.has(id)) continue;
         if (imported >= MAX_NEW_PER_SYNC) break;
         try {
           const data = await download(asset);
-          await withSlot(() => savePhoto(data, asset.originalFileName || "Immich photo.jpg", id));
+          await withSlot(() => savePhoto(data, asset.originalFileName || "Immich photo.jpg", id, takenAt(asset)));
           imported += 1;
         } catch (error) {
           if (error.status === 507) { limitError = error.message; break; }

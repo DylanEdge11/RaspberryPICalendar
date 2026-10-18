@@ -527,13 +527,38 @@
     });
   }
 
-  function shuffledOrder() {
-    const order = app.photos.map((_, index) => index);
-    for (let i = order.length - 1; i > 0; i -= 1) {
+  function shuffle(items) {
+    for (let i = items.length - 1; i > 0; i -= 1) {
       const j = Math.floor(Math.random() * (i + 1));
-      [order[i], order[j]] = [order[j], order[i]];
+      [items[i], items[j]] = [items[j], items[i]];
     }
-    return order;
+    return items;
+  }
+
+  // "On this day": a photo taken within three days of today's date in an earlier year.
+  function memoryLabel(photo) {
+    const today = app.state?.today;
+    if (!app.state?.settings?.photo_memories || !today || !/^\d{4}-\d{2}-\d{2}/.test(photo.taken_at || "")) return "";
+    const year = Number(photo.taken_at.slice(0, 4));
+    const thisYear = Number(today.slice(0, 4));
+    if (year >= thisYear) return "";
+    const monthDay = photo.taken_at.slice(5, 10);
+    const todayMs = Date.parse(`${today}T12:00:00Z`);
+    const distance = Math.min(...[thisYear - 1, thisYear, thisYear + 1].map((candidate) => {
+      const ms = Date.parse(`${candidate}-${monthDay}T12:00:00Z`);
+      return Number.isFinite(ms) ? Math.abs(ms - todayMs) / 86_400_000 : Infinity;
+    }));
+    if (distance > 3) return "";
+    const ago = thisYear - year;
+    return `${distance === 0 ? "On this day" : "This week"} · ${year} · ${ago} year${ago === 1 ? "" : "s"} ago`;
+  }
+
+  function shuffledOrder() {
+    // Memories lead each pass through the album; everything else follows in random order.
+    const indexes = app.photos.map((_, index) => index);
+    const memories = indexes.filter((index) => memoryLabel(app.photos[index]));
+    const others = indexes.filter((index) => !memoryLabel(app.photos[index]));
+    return [...shuffle(memories), ...shuffle(others)];
   }
 
   function nextPhotos(count) {
@@ -580,7 +605,9 @@
     const src = escapeHtml(photoSrc(photo));
     const alt = escapeHtml(photo.original_name || "Family photo");
     const backdrop = contain ? `<img class="frame-backdrop" src="${src}" alt="" aria-hidden="true">` : "";
-    return `<figure class="frame-tile${contain ? " contain" : ""}">${backdrop}<img class="frame-photo drift-${drift}" src="${src}" alt="${alt}"></figure>`;
+    const memory = memoryLabel(photo);
+    const caption = memory ? `<figcaption class="frame-memory">${escapeHtml(memory)}</figcaption>` : "";
+    return `<figure class="frame-tile${contain ? " contain" : ""}">${backdrop}<img class="frame-photo drift-${drift}" src="${src}" alt="${alt}">${caption}</figure>`;
   }
 
   function sceneDuration() {

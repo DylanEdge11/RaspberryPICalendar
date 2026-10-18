@@ -228,13 +228,36 @@ test("Photo Mode zoom and return-to-calendar settings are validated and saved", 
   const defaults = (await (await fetch(`${baseUrl}/api/state`)).json()).settings;
   assert.equal(defaults.photo_motion, true);
   assert.equal(defaults.photo_mode_minutes, 30);
-  const saved = await post({ photo_motion: false, photo_mode_minutes: 0 });
+  assert.equal(defaults.photo_memories, true);
+  const saved = await post({ photo_motion: false, photo_mode_minutes: 0, photo_memories: false });
   assert.equal(saved.status, 200);
   const settings = (await saved.json()).state.settings;
   assert.equal(settings.photo_motion, false);
   assert.equal(settings.photo_mode_minutes, 0);
+  assert.equal(settings.photo_memories, false);
   assert.equal((await post({ photo_mode_minutes: 7 })).status, 400);
   assert.equal((await post({ photo_motion: "no" })).status, 400);
+});
+
+test("uploads record the camera date and get a small thumbnail for the phone list", async () => {
+  const sharp = (await import("sharp")).default;
+  const jpeg = await sharp({ create: { width: 1600, height: 1200, channels: 3, background: "#7a9e7e" } })
+    .withExif({ IFD2: { DateTimeOriginal: "2020:10:18 10:15:00" } }).jpeg().toBuffer();
+  const form = new FormData();
+  form.append("photo", new Blob([jpeg], { type: "image/jpeg" }), "camera.jpg");
+  const upload = await fetch(`${baseUrl}/api/photos`, { method: "POST", headers: { Cookie: cookie }, body: form });
+  assert.equal(upload.status, 201);
+  const { photo } = await upload.json();
+  assert.equal(photo.taken_at, "2020-10-18T10:15:00");
+  assert.match(photo.thumb_url, /^\/media\/thumb\/photo_[a-z0-9_]+\.jpg$/);
+  const thumb = await fetch(`${baseUrl}${photo.thumb_url}`);
+  assert.equal(thumb.status, 200);
+  const size = await sharp(Buffer.from(await thumb.arrayBuffer())).metadata();
+  assert.equal(size.width, 320);
+  assert.equal(size.height, 320);
+  const remove = await fetch(`${baseUrl}/api/photos/${photo.id}`, { method: "DELETE", headers: { Cookie: cookie } });
+  assert.equal(remove.status, 200);
+  assert.equal((await fetch(`${baseUrl}${photo.thumb_url}`)).status, 404);
 });
 
 test("event API returns the requested range and no live account claim in demo mode", async () => {
