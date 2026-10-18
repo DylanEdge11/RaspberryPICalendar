@@ -20,7 +20,11 @@ const APP_MODE = (process.env.APP_MODE || "demo").trim().toLowerCase();
 const HOST = process.env.APP_HOST || "0.0.0.0";
 const PORT = Number(process.env.APP_PORT || 8080);
 const TIMEZONE = process.env.TIMEZONE || "America/Regina";
-const SYNC_INTERVAL_MIN = clampInteger(process.env.CALENDAR_SYNC_INTERVAL_MIN || 15, 5, 1440);
+// A full refresh of every calendar runs hourly; in between, a light check asks Google
+// only for events changed since the last check, so new events appear within minutes.
+const SYNC_INTERVAL_MIN = clampInteger(process.env.CALENDAR_SYNC_INTERVAL_MIN || 60, 5, 1440);
+const CHANGES_INTERVAL_MIN = clampInteger(process.env.CALENDAR_CHANGES_INTERVAL_MIN || 2, 1, 60);
+const CALENDAR_API = (process.env.GOOGLE_CALENDAR_API || "https://www.googleapis.com/calendar/v3").replace(/\/+$/, "");
 const IMMICH_SYNC_INTERVAL_MIN = clampInteger(process.env.IMMICH_SYNC_INTERVAL_MIN || 15, 1, 1440);
 // After someone browses to another week/month from the phone, the display returns to "today" on its own.
 const AUTO_RETURN_MIN = clampInteger(process.env.AUTO_RETURN_TO_TODAY_MIN || 30, 1, 1440);
@@ -34,7 +38,8 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 const MAX_DECODED_PIXELS = 40_000_000;
 const MAX_PHOTOS = clampInteger(process.env.MAX_PHOTOS || 500, 1, 5000);
 const MAX_PHOTO_STORAGE_BYTES = clampNumber(process.env.MAX_PHOTO_STORAGE_BYTES || 2 * 1024 ** 3, 50 * 1024 ** 2, 20 * 1024 ** 3);
-const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+// A paired phone stays signed in for a year of inactivity; sessions live in SQLite so restarts and updates keep them.
+const SESSION_TTL_MS = 365 * 24 * 60 * 60 * 1000;
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const COOKIE_NAME = "family_calendar_session";
 const RECONNECT_PREFIX = "Reconnect needed:";
@@ -118,7 +123,6 @@ try {
   // Photo uploads explain the missing optional runtime dependency to the caller.
 }
 
-const sessions = new Map();
 const oauthStates = new Map();
 const loginAttempts = new Map();
 const updateClients = new Set();
@@ -249,6 +253,12 @@ function initializeDatabase() {
     );
 
     -- Kept beside photos (not new columns) so an older release can still roll back onto this database.
+    CREATE TABLE IF NOT EXISTS sessions (
+      token_hash TEXT PRIMARY KEY,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS photo_meta (
       photo_id TEXT PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,
       taken_at TEXT,
@@ -326,7 +336,7 @@ function readSettings() {
   return {
     weather_city: values.weather_city || "Regina",
     weather_duration: values.weather_duration === "weekly" ? "weekly" : "hourly",
-    view: values.view === "month" ? "month" : "week",
+    view: ["month", "today"].includes(values.view) ? values.view : "week",
     anchor_date: !followToday && isDateKey(values.anchor_date) ? values.anchor_date : todayKey(),
     follow_today: followToday,
     manual_until: followToday ? "" : new Date(manualUntil).toISOString(),
@@ -366,7 +376,7 @@ function updateSettings(patch) {
   }
   if (next.weekly_end_hour <= next.weekly_start_hour) throw httpError(400, 'Weekly end time must be later than start time. Choose midnight (end of day) for late events.');
   if (patch.view !== undefined) {
-    if (!['week', 'month'].includes(patch.view)) throw httpError(400, "view must be week or month");
+    if (!['week', 'month', 'today'].includes(patch.view)) throw httpError(400, "view must be today, week or month");
     next.view = patch.view;
   }
   if (patch.anchor_date !== undefined) {
@@ -480,6 +490,8 @@ function daysInMonth(year, month) {
 }
 
 function periodRange(settings = readSettings()) {
+  // The Today view shows the chosen day with the next day beside it.
+  if (settings.view === "today") return { start: settings.anchor_date, end: addDays(settings.anchor_date, 2) };
   if (settings.view === "month") {
     const anchor = dateKeyToDate(settings.anchor_date);
     const monthStart = `${anchor.getUTCFullYear()}-${String(anchor.getUTCMonth() + 1).padStart(2, "0")}-01`;
@@ -504,7 +516,7 @@ function getPeriodInfo(settings = readSettings()) {
 function getSyncStatus() {
   const row = db.prepare("SELECT last_attempt_at, last_success_at, error FROM sync_status WHERE id = 1").get() || {};
   const needsReconnect = APP_MODE === "production" && Boolean(db.prepare("SELECT 1 FROM google_accounts WHERE last_error LIKE ? LIMIT 1").get(`${RECONNECT_PREFIX}%`));
-  const stale = APP_MODE === "production" && (!row.last_success_at || row.error || Date.now() - Date.parse(row.last_success_at) > SYNC_INTERVAL_MIN * 2 * 60_000);
+  const stale = APP_MODE === "production" && (!row.last_success_at || row.error || Date.now() - Date.parse(row.last_success_at) > Math.max(30, CHANGES_INTERVAL_MIN * 10) * 60_000);
   return {
     mode: APP_MODE,
     last_attempt_at: row.last_attempt_at || null,
@@ -587,16 +599,38 @@ function parseCookies(value = "") {
   return Object.fromEntries(value.split(";").map((part) => part.trim().split("=")).filter(([key, val]) => key && val).map(([key, ...rest]) => [key, rest.join("=")]));
 }
 
+// Only a hash of each session token is stored, so a copied database cannot be used to sign in.
+function sessionHash(token) {
+  return createHash("sha256").update(String(token)).digest("hex");
+}
+
+function createSession() {
+  const token = randomBytes(24).toString("base64url");
+  const now = Date.now();
+  db.prepare("INSERT INTO sessions(token_hash, created_at, expires_at) VALUES(?, ?, ?)").run(sessionHash(token), now, now + SESSION_TTL_MS);
+  db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(now);
+  return token;
+}
+
+function deleteSession(token) {
+  db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(sessionHash(token));
+}
+
 function sessionFromRequest(req) {
   const token = parseCookies(req.headers.cookie || "")[COOKIE_NAME];
   if (!token) return null;
-  const session = sessions.get(token);
-  if (!session || session.expiresAt < Date.now()) {
-    sessions.delete(token);
+  const hash = sessionHash(token);
+  const session = db.prepare("SELECT created_at, expires_at FROM sessions WHERE token_hash = ?").get(hash);
+  const now = Date.now();
+  if (!session || session.expires_at < now) {
+    if (session) deleteSession(token);
     return null;
   }
-  session.expiresAt = Date.now() + SESSION_TTL_MS;
-  return { token, ...session };
+  // Slide the expiry forward at most once a day to avoid a write on every request.
+  if (session.expires_at - now < SESSION_TTL_MS - 86_400_000) {
+    db.prepare("UPDATE sessions SET expires_at = ? WHERE token_hash = ?").run(now + SESSION_TTL_MS, hash);
+  }
+  return { token, createdAt: session.created_at, expiresAt: session.expires_at };
 }
 
 function requireAdmin(req) {
@@ -1069,7 +1103,7 @@ async function getServiceAccessToken() {
 
 async function saveGoogleConnection(token) {
   // Calendar's primary ID identifies the account without requesting profile scopes.
-  const primaryUrl = "https://www.googleapis.com/calendar/v3/calendars/primary";
+  const primaryUrl = `${CALENDAR_API}/calendars/primary`;
   const primary = await googleJson(primaryUrl, token.access_token);
   if (!primary.id) throw httpError(502, "Google did not return a primary calendar identity");
   const accounts = db.prepare("SELECT * FROM google_accounts ORDER BY created_at, id").all();
@@ -1150,15 +1184,23 @@ async function googleJsonForAccount(account, url, options = {}) {
   }
 }
 
-async function syncAccountSources(account, sourceRows, range) {
+// When each calendar was last fully or incrementally synced (the request's start time).
+// Kept in memory: after a restart the first sync of each calendar is a full one.
+const lastSourceSync = new Map();
+
+async function syncAccountSources(account, sourceRows, range, { changesOnly = false } = {}) {
   for (const source of sourceRows) {
-    const query = new URL("https://www.googleapis.com/calendar/v3/calendars/" + encodeURIComponent(source.calendar_id) + "/events");
+    const key = `${account.id}::${source.calendar_id}`;
+    const since = changesOnly ? lastSourceSync.get(key) : null;
+    const startedAt = Date.now();
+    const query = new URL(`${CALENDAR_API}/calendars/${encodeURIComponent(source.calendar_id)}/events`);
     query.searchParams.set("singleEvents", "true");
     query.searchParams.set("showDeleted", "true");
-    query.searchParams.set("orderBy", "startTime");
     query.searchParams.set("maxResults", "2500");
     query.searchParams.set("timeMin", googleBoundary(range.start));
     query.searchParams.set("timeMax", googleBoundary(range.end));
+    // Two minutes of overlap covers clock skew between the Pi and Google.
+    if (since) query.searchParams.set("updatedMin", new Date(since - 120_000).toISOString());
 
     const items = [];
     let pageToken = null;
@@ -1169,14 +1211,18 @@ async function syncAccountSources(account, sourceRows, range) {
       pageToken = payload.nextPageToken || null;
       if (!pageToken) break;
     }
+    const complete = !pageToken;
     const rangeStartMs = Date.parse(googleBoundary(range.start));
     const rangeEndMs = Date.parse(googleBoundary(range.end));
-    db.prepare(`
-      DELETE FROM calendar_events
-      WHERE account_id = ? AND calendar_id = ?
-        AND ((all_day = 1 AND start_date < ? AND end_date > ?)
-          OR (all_day = 0 AND end_ms > ? AND start_ms < ?))
-    `).run(account.id, source.calendar_id, range.end, range.start, rangeStartMs, rangeEndMs);
+    if (!since) {
+      db.prepare(`
+        DELETE FROM calendar_events
+        WHERE account_id = ? AND calendar_id = ?
+          AND ((all_day = 1 AND start_date < ? AND end_date > ?)
+            OR (all_day = 0 AND end_ms > ? AND start_ms < ?))
+      `).run(account.id, source.calendar_id, range.end, range.start, rangeStartMs, rangeEndMs);
+    }
+    const remove = db.prepare("DELETE FROM calendar_events WHERE account_id = ? AND calendar_id = ? AND event_id = ?");
     const insert = db.prepare(`
       INSERT INTO calendar_events(account_id, calendar_id, event_id, title, description, location, all_day, start_date, end_date, start_local, end_local, start_ms, end_ms, color, status, updated_at)
       VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1187,11 +1233,17 @@ async function syncAccountSources(account, sourceRows, range) {
         end_ms = excluded.end_ms, color = excluded.color, status = excluded.status, updated_at = excluded.updated_at
     `);
     for (const event of items) {
-      if (!event.id || event.status === "cancelled") continue;
+      if (!event.id) continue;
+      if (event.status === "cancelled") {
+        remove.run(account.id, source.calendar_id, event.id);
+        continue;
+      }
       const normalized = normalizeGoogleEvent(event, source.color || "#6d7bea");
       if (!normalized) continue;
       insert.run(account.id, source.calendar_id, event.id, normalized.title, normalized.description, normalized.location, normalized.all_day ? 1 : 0, normalized.start_date, normalized.end_date, normalized.start_local, normalized.end_local, normalized.start_ms, normalized.end_ms, normalized.color, event.status || "confirmed", new Date().toISOString());
     }
+    // An unfinished batch of changes is asked for again next time from the same point.
+    if (complete || !since) lastSourceSync.set(key, startedAt);
   }
 }
 
@@ -1242,7 +1294,7 @@ async function refreshServiceSources(account) {
   const failures = [];
   for (const [index, calendarId] of SERVICE_CALENDAR_IDS.entries()) {
     try {
-      const calendar = await googleJsonForAccount(account, `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}`);
+      const calendar = await googleJsonForAccount(account, `${CALENDAR_API}/calendars/${encodeURIComponent(calendarId)}`);
       insert.run(`${account.id}::${calendarId}`, account.id, calendarId, calendar.summary || calendarId, calendar.description || "", SOURCE_COLORS[index % SOURCE_COLORS.length], new Date().toISOString());
     } catch (error) {
       if (error.statusCode !== 404 && error.statusCode !== 403) throw error;
@@ -1254,7 +1306,7 @@ async function refreshServiceSources(account) {
 
 async function refreshGoogleSources(account) {
   if (account.id === SERVICE_ACCOUNT_ID) return refreshServiceSources(account);
-  const payload = await googleJsonForAccount(account, "https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=reader&showHidden=false&maxResults=250");
+  const payload = await googleJsonForAccount(account, `${CALENDAR_API}/users/me/calendarList?minAccessRole=reader&showHidden=false&maxResults=250`);
   const now = new Date().toISOString();
   const insert = db.prepare(`
     INSERT INTO calendar_sources(id, account_id, calendar_id, summary, description, color, enabled, updated_at)
@@ -1268,7 +1320,7 @@ async function refreshGoogleSources(account) {
   }
 }
 
-async function syncCalendars() {
+async function syncCalendars({ changesOnly = false } = {}) {
   if (APP_MODE !== "production" || syncInProgress || accountMutationInProgress || phoneUpdates.busy()) return { skipped: true };
   syncInProgress = true;
   const attemptedAt = new Date().toISOString();
@@ -1280,11 +1332,12 @@ async function syncCalendars() {
   try {
     for (const account of accounts) {
       try {
-        const warning = await refreshGoogleSources(account);
+        // The light check skips refreshing the list of calendars; the hourly full sync does that.
+        const warning = changesOnly ? db.prepare("SELECT last_error FROM google_accounts WHERE id = ?").get(account.id)?.last_error : await refreshGoogleSources(account);
         const sources = db.prepare("SELECT * FROM calendar_sources WHERE account_id = ? AND enabled = 1").all(account.id);
         sourceCount += sources.length;
-        await syncAccountSources(account, sources, range);
-        db.prepare("UPDATE google_accounts SET last_error = ? WHERE id = ?").run(warning ?? null, account.id);
+        await syncAccountSources(account, sources, range, { changesOnly });
+        if (!changesOnly) db.prepare("UPDATE google_accounts SET last_error = ? WHERE id = ?").run(warning ?? null, account.id);
         if (warning) errors.push(warning);
       } catch (error) {
         const message = error.status ? error.message : `Google sync failed for ${account.label}`;
@@ -1337,6 +1390,10 @@ async function handleRequest(req, res) {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
   const method = req.method || "GET";
 
+  if (url.pathname === "/api/system/backup" && method === "GET") {
+    requireAdmin(req);
+    return sendJson(res, 200, readBackupStatus());
+  }
   if (url.pathname === '/api/system/update') {
     requireAdmin(req);
     if (method === 'GET') return sendJson(res, 200, phoneUpdates.status());
@@ -1380,7 +1437,10 @@ async function handleRequest(req, res) {
   }
 
   if (method === "GET" && url.pathname === "/api/auth/me") {
-    return sendJson(res, 200, { authenticated: Boolean(sessionFromRequest(req)), mode: APP_MODE, pin_required: adminPinIsConfigured() });
+    const session = sessionFromRequest(req);
+    // Renew the cookie on each visit so an active phone is never asked for the PIN again.
+    if (session) setSessionCookie(res, session.token);
+    return sendJson(res, 200, { authenticated: Boolean(session), mode: APP_MODE, pin_required: adminPinIsConfigured() });
   }
   if (method === "POST" && url.pathname === "/api/auth/login") {
     checkLoginLimit(req);
@@ -1390,14 +1450,13 @@ async function handleRequest(req, res) {
       return sendJson(res, 401, { error: "That pairing PIN was not accepted" });
     }
     clearLoginFailures(req);
-    const token = randomBytes(24).toString("base64url");
-    sessions.set(token, { createdAt: Date.now(), expiresAt: Date.now() + SESSION_TTL_MS });
+    const token = createSession();
     setSessionCookie(res, token);
     return sendJson(res, 200, { ok: true, expires_in: SESSION_TTL_MS / 1000 });
   }
   if (method === "POST" && url.pathname === "/api/auth/logout") {
     const session = sessionFromRequest(req);
-    if (session) sessions.delete(session.token);
+    if (session) deleteSession(session.token);
     setSessionCookie(res, "", 0);
     return sendJson(res, 200, { ok: true });
   }
@@ -1409,7 +1468,8 @@ async function handleRequest(req, res) {
       const current = readSettings();
       const amount = body.direction === "previous" ? -1 : body.direction === "next" ? 1 : 0;
       if (!amount) throw httpError(400, "direction must be previous or next");
-      next = updateSettings({ anchor_date: current.view === "month" ? addMonths(current.anchor_date, amount) : addDays(current.anchor_date, amount * 7) });
+      const step = current.view === "month" ? addMonths(current.anchor_date, amount) : addDays(current.anchor_date, current.view === "today" ? amount : amount * 7);
+      next = updateSettings({ anchor_date: step });
     } else if (body.action === "today") {
       next = updateSettings({ anchor_date: todayKey() });
     } else {
@@ -1566,6 +1626,15 @@ server.on("clientError", (error, socket) => {
   socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
 });
 
+// Written by the nightly backup job (scripts/nightly-backup.py); absent until it is installed.
+function readBackupStatus() {
+  try {
+    return { installed: true, ...JSON.parse(fs.readFileSync(process.env.BACKUP_STATUS || "/var/lib/family-calendar-backup/status.json", "utf8")) };
+  } catch {
+    return { installed: false };
+  }
+}
+
 function currentPeriodKey() {
   const settings = readSettings();
   return `${todayKey()}:${settings.view}:${settings.anchor_date}:${settings.follow_today}`;
@@ -1610,6 +1679,7 @@ if (shouldStartServer && APP_MODE === "production" && !adminPinIsConfigured()) {
   }, 30_000);
   rolloverTimer.unref();
   const syncTimer = setInterval(() => { syncCalendars().catch((error) => log("error", "Scheduled calendar sync failed", { message: error.message })); }, SYNC_INTERVAL_MIN * 60_000);
+  setInterval(() => { syncCalendars({ changesOnly: true }).catch((error) => log("error", "Calendar change check failed", { message: error.message })); }, CHANGES_INTERVAL_MIN * 60_000).unref();
   syncTimer.unref();
   if (APP_MODE === "production") setTimeout(() => { syncCalendars().catch((error) => log("error", "Initial calendar sync failed", { message: error.message })); }, 1000).unref();
   setTimeout(() => { backfillPhotoMeta().catch((error) => log("error", "Photo thumbnail backfill failed", { message: error.message })); }, 10_000).unref();

@@ -14,7 +14,10 @@ The first release is intentionally small. It uses one Node.js service, the built
 - **On this day** (phone setting, on by default): Photo Mode starts with photos taken within three days of today's date in earlier years, each labelled like "On this day · 2021 · 5 years ago". The date comes from the camera data (EXIF) of uploaded photos, from Immich's "taken" date, or from Google Photos. Photos without a date simply take part in the normal shuffle. Photos added before this feature get their dates and thumbnails filled in automatically shortly after the service starts.
 - The phone's photo list uses small 320px thumbnails instead of full-size images, so it stays quick with hundreds of photos.
 - Wall-display conveniences: weather and event pop-ups close by themselves after two minutes without a touch; in the week view a red line marks the current time in today's column and finished events fade.
-- Phone controls at `/control`, including previous/next/today, week/month switching, week-start preference, slideshow timing, quiet hours, display title, upload, and removal.
+- Three views: **Today** (a large, easy-to-read agenda for the day with tomorrow beside it, a "Now" line, and finished events faded), **Week** and **Month**. In the week view, events outside the visible hours appear as small "▲ earlier" / "▼ later" markers at the top or bottom of the day, and only events that actually overlap share the width.
+- Calendar changes appear within about two minutes: a light check asks Google only for events changed since the last check (`CALENDAR_CHANGES_INTERVAL_MIN`, default 2), and a full refresh runs hourly (`CALENDAR_SYNC_INTERVAL_MIN`, default 60).
+- A paired phone stays signed in for a year of inactivity, including across restarts and updates; **Sign out** ends it.
+- Phone controls at `/control`, including previous/next/today, today/week/month switching, week-start preference, slideshow timing, quiet hours, display title, upload, and removal.
 - Server-sent updates so a phone view change appears on the display without a manual reload. Browsers without `EventSource` fall back to polling.
 - SQLite-backed display settings and photo metadata.
 - Protected control mutations using a pairing PIN and an HttpOnly session cookie.
@@ -77,7 +80,8 @@ APP_PORT=8080
 APP_DATA_DIR=/var/lib/family-calendar
 TIMEZONE=America/Regina
 ADMIN_PIN=use-a-long-private-pin
-CALENDAR_SYNC_INTERVAL_MIN=15
+CALENDAR_SYNC_INTERVAL_MIN=60
+CALENDAR_CHANGES_INTERVAL_MIN=2
 AUTO_RETURN_TO_TODAY_MIN=30
 MAX_PHOTOS=500
 MAX_PHOTO_STORAGE_BYTES=2147483648
@@ -283,6 +287,28 @@ curl http://127.0.0.1:8080/api/health
 The schema has a `schema_version` setting and is currently version 1. Future migrations must be additive, transactional, and tested before release. A migration that changes or removes data is not safely reversible by changing Git commits alone: stop the service, restore the pre-update SQLite backup (and any corresponding photos/secrets backup), then start the known-good code. Do not delete the only backup until the new release has been observed in normal use.
 
 ## Backups and restore
+
+### Nightly backups (recommended, one-time setup)
+
+Run once on the Pi:
+
+```sh
+cd /opt/family-calendar
+sudo bash scripts/install-backups.sh
+```
+
+Every night around 3:15 AM the Pi writes `/var/backups/family-calendar/nightly/<date>/` with the database, Google/Immich secrets and `/etc/family-calendar` (configuration and the service-account key), keeping the last 7 nights. Photos are kept as a single mirror in `nightly/photos/` that is updated in place rather than copied every night. Pre-update backups made by **Update application** each contain every photo, so the nightly job also trims those to the newest 3. The phone controls show the last backup time under **Application**, or a warning if the last one failed or is more than two days old. Re-run the install script if a release changes `scripts/nightly-backup.py`.
+
+These backups live on the same SD card, so they protect against mistakes and corruption but not a failed card. To keep them on a USB stick instead, mount it (for example at `/mnt/backup`), then `sudo systemctl edit family-calendar-backup.service` and add:
+
+```ini
+[Service]
+Environment=BACKUP_DIR=/mnt/backup/family-calendar
+```
+
+To restore from a nightly backup, stop the service, copy `calendar.sqlite` into `/var/lib/family-calendar/`, extract `secrets.tgz` there, copy `nightly/photos/` back to `/var/lib/family-calendar/photos/`, restore `/etc/family-calendar` from `configuration.tgz` if needed, fix ownership with `sudo chown -R family-calendar:family-calendar /var/lib/family-calendar`, and start the service.
+
+### Manual backups
 
 Calendar connection maintenance: use **Disconnect account** in phone controls to remove an extra connection. This deletes only that connection's local token and cached calendars/events, never Google events or other connections. Unchecking hides cached events immediately, even during an internet outage. Reconnecting reuses the primary calendar identity and preserves selections, using the existing read-only scope ([Google endpoint](https://developers.google.com/workspace/calendar/api/v3/reference/calendars/get)). Existing duplicates require explicit removal. If an unidentified legacy connection has expired, disconnect it before reconnecting. Disconnect during active sync asks you to retry shortly.
 

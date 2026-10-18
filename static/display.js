@@ -170,6 +170,7 @@
 
   function formatPeriod(state) {
     const settings = state.settings;
+    if (settings.view === "today") return formatDate(settings.anchor_date, { weekday: "long", month: "long", day: "numeric" });
     if (settings.view === "month") {
       return formatDate(`${settings.anchor_date.slice(0, 7)}-01`, { month: "long", year: "numeric" });
     }
@@ -266,9 +267,9 @@
     dom.displayTitle.textContent = settings.display_title;
     document.getElementById("albumDialog").classList.toggle("no-motion", settings.photo_motion === false);
     dom.modeLabel.textContent = isDemo ? "Family calendar · demo" : "Family calendar";
-    dom.viewKicker.textContent = settings.view === "month" ? "THIS MONTH" : "THIS WEEK";
+    dom.viewKicker.textContent = settings.view === "today" ? (settings.anchor_date === app.state.today ? "TODAY" : "DAY VIEW") : settings.view === "month" ? "THIS MONTH" : "THIS WEEK";
     dom.periodTitle.textContent = formatPeriod(app.state);
-    dom.periodSubtitle.textContent = settings.view === "month" ? "A full-month view for the room’s big picture." : "The family’s next seven days, at a glance.";
+    dom.periodSubtitle.textContent = settings.view === "today" ? "The day ahead, easy to read from across the room." : settings.view === "month" ? "A full-month view for the room’s big picture." : "The family’s next seven days, at a glance.";
     dom.footerMessage.textContent = isDemo ? "Demo mode · no account data connected" : `Private home display · ${app.state.timezone}`;
     dom.syncStatus.classList.toggle("stale", Boolean(calendar?.stale));
     dom.syncStatus.innerHTML = `<span class="status-dot"></span>${escapeHtml(calendar?.label || "Calendar status unknown")}`;
@@ -350,7 +351,16 @@
     if (!app.state?.period) return;
     const dayScrolls = new Map([...dom.calendarMount.querySelectorAll(".month-cell")].map(cell => [cell.querySelector("[data-day]").dataset.day, cell.scrollTop]));
     renderLegend();
-    dom.calendarMount.innerHTML = app.state.settings.view === "month" ? renderMonth() : renderWeek();
+    dom.calendarMount.innerHTML = app.state.settings.view === "month" ? renderMonth() : app.state.settings.view === "today" ? renderToday() : renderWeek();
+    if (app.state.settings.view === "today") {
+      // Keep what's next in view: scroll past finished events, leaving the last one visible for context.
+      const now = dom.calendarMount.querySelector(".agenda-now");
+      const list = now?.closest(".agenda-list");
+      if (now && list) {
+        const anchor = now.previousElementSibling || now;
+        list.scrollTop += anchor.getBoundingClientRect().top - list.getBoundingClientRect().top - 4;
+      }
+    }
     if (app.state.settings.view === "week") {
       const row = dom.calendarMount.querySelector(".week-time-row");
       weeklyRowHeight = Math.max(1, row.clientHeight / (TIME_END - TIME_START) * 60);
@@ -421,7 +431,7 @@
 
   function renderDayCanvas(date) {
     const events = app.events.filter((event) => !event.all_day && eventOverlapsDate(event, date));
-    const positioned = positionEvents(events, date);
+    const { positioned, early, late } = positionEvents(events, date);
     const html = positioned.map(({ event, lane, laneCount, top, height }) => {
       const color = safeColor(event.calendar_color);
       const left = (lane * 100) / laneCount;
@@ -429,32 +439,113 @@
       const time = event.start_time ? `${formatTime(event.start_time)}${event.end_time ? ` – ${formatTime(event.end_time)}` : ""}` : "";
       return `<button ${eventButton(event)} class="timed-event ${height < 34 ? 'compact-event' : ''}" style="--event-color:${color};--event-tint:${eventTint(color)};top:${top}px;height:${height}px;left:calc(${left}% + 2px);width:calc(${width}% - 5px)" title="${escapeHtml(`${event.title}${time ? ` · ${time}` : ""}`)}"><strong>${escapeHtml(event.title)}</strong><span>${escapeHtml(time)}</span></button>`;
     }).join("");
-    return `<div data-date="${date}" class="day-canvas ${date === app.state.today ? "today" : ""}">${html}</div>`;
+    return `<div data-date="${date}" class="day-canvas ${date === app.state.today ? "today" : ""}">${html}${offHoursChip(early, date, "early")}${offHoursChip(late, date, "late")}</div>`;
+  }
+
+  // Events entirely before or after the week view's visible hours get a small marker
+  // at the top or bottom of the day instead of silently disappearing.
+  function offHoursChip(items, date, edge) {
+    if (!items.length) return "";
+    const arrow = edge === "early" ? "▲" : "▼";
+    const first = items[0].event;
+    const when = first.start_date === date ? formatTime(first.start_time) : `Until ${formatTime(first.end_time)}`;
+    const label = `${when} · ${first.title}`;
+    const color = safeColor(first.calendar_color);
+    if (items.length === 1) {
+      return `<button ${eventButton(first)} class="offhours-chip ${edge}" style="--event-color:${color}" title="${escapeHtml(label)}">${arrow} ${escapeHtml(label)}</button>`;
+    }
+    const more = `${items.length} ${edge === "early" ? "earlier" : "later"}`;
+    return `<button type="button" data-day="${date}" class="offhours-chip ${edge}" style="--event-color:${color}" title="${escapeHtml(`${more}: ${items.map((item) => item.event.title).join(", ")}`)}">${arrow} ${escapeHtml(more)} · ${escapeHtml(label)}</button>`;
   }
 
   function positionEvents(events, date) {
     const rowHeight = weeklyRowHeight;
-    const sorted = events.map((event) => {
-      const start = event.start_date === date ? timeToMinutes(event.start_time) ?? TIME_START : TIME_START;
-      const end = event.end_date === date ? timeToMinutes(event.end_time) ?? TIME_END : TIME_END;
-      return { event, start, end };
-    }).filter((item) => item.end > item.start && item.end > TIME_START && item.start < TIME_END).map((item) => {
-      let { start, end } = item;
-      start = Math.max(TIME_START, Math.min(TIME_END, start));
-      end = Math.min(TIME_END, Math.max(start + 20, end));
-      return { ...item, start, end };
-    }).filter((item) => item.end > TIME_START && item.start < TIME_END).sort((a, b) => a.start - b.start || a.end - b.end);
-    const laneEnds = [];
+    const early = [];
+    const late = [];
+    const visible = [];
+    for (const event of events) {
+      const start = event.start_date === date ? timeToMinutes(event.start_time) ?? 0 : 0;
+      const end = event.end_date === date ? timeToMinutes(event.end_time) ?? 1440 : 1440;
+      if (end <= start) continue;
+      if (end <= TIME_START) early.push({ event, start, end });
+      else if (start >= TIME_END) late.push({ event, start, end });
+      else visible.push({ event, start: Math.max(TIME_START, start), end: Math.min(TIME_END, Math.max(start + 20, end)) });
+    }
+    early.sort((a, b) => a.start - b.start);
+    late.sort((a, b) => a.start - b.start);
+    visible.sort((a, b) => a.start - b.start || a.end - b.end);
+
+    // Lanes are shared only within a cluster of overlapping events, so one clash
+    // does not squeeze every other event that day into half the width.
     const positioned = [];
-    for (const item of sorted) {
-      let lane = laneEnds.findIndex((end) => end <= item.start);
+    let cluster = [];
+    let laneEnds = [];
+    let clusterEnd = -1;
+    const closeCluster = () => {
+      for (const item of cluster) positioned.push({ ...item, laneCount: laneEnds.length });
+      cluster = [];
+      laneEnds = [];
+    };
+    for (const item of visible) {
+      if (item.start >= clusterEnd) closeCluster();
+      let lane = laneEnds.findIndex((laneEnd) => laneEnd <= item.start);
       if (lane < 0) lane = laneEnds.length;
       laneEnds[lane] = item.end;
+      clusterEnd = Math.max(clusterEnd, item.end);
       const top = ((item.start - TIME_START) / 60) * rowHeight;
       const available = ((TIME_END - item.start) / 60) * rowHeight;
-      positioned.push({ ...item, lane, top, height: Math.min(available, Math.max(22, ((item.end - item.start) / 60) * rowHeight - 2)) });
+      cluster.push({ ...item, lane, top, height: Math.min(available, Math.max(22, ((item.end - item.start) / 60) * rowHeight - 2)) });
     }
-    return positioned.map((item) => ({ ...item, laneCount: laneEnds.length }));
+    closeCluster();
+    return { positioned, early, late };
+  }
+
+  // Today view: a large agenda for the chosen day, with a smaller "Tomorrow" column.
+  function agendaFor(date) {
+    const events = app.events.filter((event) => eventOverlapsDate(event, date));
+    const allDay = events.filter((event) => event.all_day);
+    const timed = events.filter((event) => !event.all_day).sort((a, b) => {
+      const startA = a.start_date === date ? a.start_time || "00:00" : "00:00";
+      const startB = b.start_date === date ? b.start_time || "00:00" : "00:00";
+      return startA.localeCompare(startB) || a.title.localeCompare(b.title);
+    });
+    return { allDay, timed };
+  }
+
+  function agendaRow(event, date) {
+    const color = safeColor(event.calendar_color);
+    const starts = event.start_date === date ? formatTime(event.start_time) : "Earlier";
+    const ends = event.end_date === date && event.end_time ? formatTime(event.end_time) : "";
+    const place = event.location ? `<span class="agenda-place">${escapeHtml(event.location)}</span>` : "";
+    return `<button ${eventButton(event)} class="agenda-row" style="--event-color:${color};--event-tint:${eventTint(color)}"><span class="agenda-time"><strong>${escapeHtml(starts)}</strong>${ends ? `<span>${escapeHtml(ends)}</span>` : ""}</span><span class="agenda-body"><strong>${escapeHtml(event.title)}</strong><span class="agenda-calendar">${escapeHtml(event.calendar || "")}</span>${place}</span></button>`;
+  }
+
+  function renderAgendaColumn(date, heading, { showNow }) {
+    const { allDay, timed } = agendaFor(date);
+    const chips = allDay.map((event) => `<button ${eventButton(event)} class="agenda-allday" style="--event-color:${safeColor(event.calendar_color)};--event-tint:${eventTint(event.calendar_color)}">${escapeHtml(event.title)}</button>`).join("");
+    let rows = "";
+    let nowPlaced = !showNow;
+    const now = showNow ? new Intl.DateTimeFormat("en-GB", { timeZone: app.state.timezone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date()) : "";
+    for (const event of timed) {
+      const start = event.start_date === date ? event.start_time || "00:00" : "00:00";
+      if (!nowPlaced && start > now) {
+        rows += `<div class="agenda-now" aria-hidden="true"><span>Now · ${escapeHtml(formatTime(now))}</span></div>`;
+        nowPlaced = true;
+      }
+      rows += agendaRow(event, date);
+    }
+    if (!nowPlaced && timed.length) rows += `<div class="agenda-now" aria-hidden="true"><span>Now · ${escapeHtml(formatTime(now))}</span></div>`;
+    const empty = !allDay.length && !timed.length ? `<p class="agenda-empty">Nothing scheduled.</p>` : "";
+    return `<section class="agenda-column"><h3 class="agenda-heading"><button type="button" data-day="${date}">${heading}</button></h3>${chips ? `<div class="agenda-allday-row">${chips}</div>` : ""}<div class="agenda-list">${rows}${empty}</div></section>`;
+  }
+
+  function renderToday() {
+    const day = app.state.settings.anchor_date;
+    const next = addDays(day, 1);
+    const isToday = day === app.state.today;
+    const dayHeading = isToday ? "Today" : escapeHtml(formatDate(day, { weekday: "long", month: "short", day: "numeric" }));
+    const nextHeading = day === addDays(app.state.today, -1) ? "Today" : next === addDays(app.state.today, 1) ? "Tomorrow" : escapeHtml(formatDate(next, { weekday: "long", month: "short", day: "numeric" }));
+    return `<div class="today-view">${renderAgendaColumn(day, dayHeading, { showNow: isToday })}${renderAgendaColumn(next, `${nextHeading} <span>${escapeHtml(formatDate(next, { weekday: "short", month: "short", day: "numeric" }))}</span>`, { showNow: false })}</div>`;
   }
 
   function renderMonth() {
@@ -856,6 +947,8 @@
     connectUpdates();
     window.setInterval(updateClock, 30_000);
     window.setInterval(updateTimeMarkers, 30_000);
+    // The Today view's "Now" line sits between events, so it is redrawn each minute.
+    window.setInterval(() => { if (app.state?.settings.view === "today" && !document.hidden) renderCalendar(); }, 60_000);
     window.setInterval(updateNightMode, 30_000);
     window.setInterval(checkDateRollover, 60_000);
   }

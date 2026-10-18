@@ -10,6 +10,7 @@ import test, { after, before } from "node:test";
 const testDataDir = await mkdtemp(path.join(os.tmpdir(), "family-calendar-unit-"));
 process.env.APP_DATA_DIR = testDataDir;
 process.env.APP_MODE = "demo";
+process.env.BACKUP_STATUS = path.join(testDataDir, "backup-status.json");
 const app = await import("../server.mjs");
 
 test("week starts on the configured day", () => {
@@ -274,6 +275,28 @@ test("the display can be added to an iPad home screen as a full-screen app", asy
     assert.equal(response.status, 200, icon);
     assert.equal(response.headers.get("content-type"), "image/png");
   }
+});
+
+test("the Today view covers the chosen day and the next, and steps one day at a time", async () => {
+  const post = (body) => fetch(`${baseUrl}/api/state`, { method: "POST", headers: { "Content-Type": "application/json", Cookie: cookie }, body: JSON.stringify(body) });
+  const today = await (await post({ view: "today", anchor_date: "2026-03-10" })).json();
+  assert.equal(today.state.settings.view, "today");
+  assert.deepEqual([today.state.period.start, today.state.period.end], ["2026-03-10", "2026-03-12"]);
+  const next = await (await post({ action: "navigate", direction: "next" })).json();
+  assert.equal(next.state.settings.anchor_date, "2026-03-11");
+  assert.equal((await post({ view: "agenda" })).status, 400);
+  await post({ view: "week", action: "today" });
+});
+
+test("the phone can see whether nightly backups are running", async () => {
+  const { writeFile } = await import("node:fs/promises");
+  const check = async () => (await fetch(`${baseUrl}/api/system/backup`, { headers: { Cookie: cookie } })).json();
+  assert.equal((await fetch(`${baseUrl}/api/system/backup`)).status, 401);
+  assert.deepEqual(await check(), { installed: false });
+  await writeFile(process.env.BACKUP_STATUS, JSON.stringify({ ok: true, folder: "/var/backups/family-calendar/nightly/2026-10-18", updated_at: "2026-10-18T09:16:00Z" }));
+  const status = await check();
+  assert.equal(status.installed, true);
+  assert.equal(status.ok, true);
 });
 
 test("event API returns the requested range and no live account claim in demo mode", async () => {
