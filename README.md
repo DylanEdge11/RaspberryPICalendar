@@ -9,6 +9,7 @@ The first release is intentionally small. It uses one Node.js service, the built
 - A landscape-oriented weekly display at `/`, with a six-week month view.
 - Responsive typography and layout designed around a 1080p monitor; the actual monitor should be measured before choosing a larger target.
 - Demo mode with clearly labelled local sample content and no account access.
+- The display follows the current date automatically: a new week or month appears at midnight with no input. Browsing to another week or month from the phone is temporary and returns to today after `AUTO_RETURN_TO_TODAY_MIN` minutes (default 30), or right away with **Today**.
 - Phone controls at `/control`, including previous/next/today, week/month switching, week-start preference, slideshow timing, quiet hours, display title, upload, and removal.
 - Server-sent updates so a phone view change appears on the display without a manual reload. Browsers without `EventSource` fall back to polling.
 - SQLite-backed display settings and photo metadata.
@@ -73,6 +74,7 @@ APP_DATA_DIR=/var/lib/family-calendar
 TIMEZONE=America/Regina
 ADMIN_PIN=use-a-long-private-pin
 CALENDAR_SYNC_INTERVAL_MIN=15
+AUTO_RETURN_TO_TODAY_MIN=30
 MAX_PHOTOS=500
 MAX_PHOTO_STORAGE_BYTES=2147483648
 GOOGLE_CLIENT_SECRETS=/etc/family-calendar/client_secret.json
@@ -92,6 +94,44 @@ Production refuses to start without `ADMIN_PIN`. Port 8080 is plain HTTP on the 
 5. Complete Google consent in the same browser that started pairing. Repeat the connection for the additional household Google account if needed.
 6. Select the calendars to display. The app requests the narrow read-only scope `https://www.googleapis.com/auth/calendar.readonly` and stores refresh tokens under `APP_DATA_DIR/secrets`.
 7. Confirm the display shows a real event and that the status pill reports a successful sync.
+
+### Recommended: service account (no sign-in, never expires, free)
+
+A service account is a Google identity for unattended devices. You share your calendars with its email address the same way you'd share with a family member, and the Pi reads them using a key file. There is no browser sign-in, no OAuth consent screen to publish, no website or privacy policy, and no 7-day expiry. It costs nothing: the Calendar API is free, and service accounts need no billing account.
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), use (or create) a project and make sure **Google Calendar API** is enabled (APIs & Services → Library).
+2. Go to **IAM & Admin → Service Accounts → Create service account**. Give it a name like `family-calendar-pi`. Skip the optional role and user-access steps.
+3. Open the new service account → **Keys → Add key → Create new key → JSON**. A `.json` file downloads. Treat it like a password.
+   - If key creation is blocked by an organization policy, you are in a Workspace/organization project; personal Gmail projects allow it by default.
+4. Copy the service account's email address (it looks like `family-calendar-pi@your-project.iam.gserviceaccount.com`).
+5. In Google Calendar on the web, for **each** calendar to show: **Settings and sharing → Share with specific people → Add people** → paste that email → permission **See all event details**. Repeat from each family member's Google account for their calendars.
+6. On the same settings page, scroll to **Integrate calendar** and copy the **Calendar ID**. Your main calendar's ID is your Gmail address.
+7. Put the key on the Pi and configure it:
+
+```sh
+sudo install -m 0640 -o root -g family-calendar service_account.json /etc/family-calendar/service_account.json
+sudoedit /etc/family-calendar/calendar.env
+# GOOGLE_SERVICE_ACCOUNT_KEY=/etc/family-calendar/service_account.json
+# GOOGLE_CALENDAR_IDS=you@gmail.com,partner@gmail.com,family0123456789@group.calendar.google.com
+sudo systemctl restart family-calendar.service
+```
+
+The calendars appear under **Shared calendars** on the control page and are shown by default; untick any you want hidden. If a calendar ID has not been shared yet, the control page names it. Editing `GOOGLE_CALENDAR_IDS` and restarting adds or removes calendars. Once the shared calendars show up, press **Disconnect account** under any old sign-in (OAuth) accounts on the control page so they stop causing "Reconnect" warnings and duplicate events.
+
+### Alternative: OAuth sign-in
+
+The original flow below signs in with each Google account in the Pi's browser. It needs the OAuth app published (which asks for a homepage and privacy policy) to avoid weekly expiry, so prefer the service account above.
+
+### Stop the weekly Google re-login (OAuth only)
+
+Google expires refresh tokens after **7 days** for any OAuth app whose publishing status is **Testing** and that requests calendar scopes. That is why the display stops syncing every week. Code cannot work around it; it is fixed in Google Cloud:
+
+1. Open Google Cloud Console → **Google Auth Platform** (APIs & Services → OAuth consent screen) → **Audience**.
+2. Under *Publishing status*, choose **Publish app** and confirm, so it reads **In production**.
+3. You do **not** need Google verification for a household app. `calendar.readonly` is a sensitive scope, so the consent page will show "Google hasn't verified this app"; choose **Advanced → Go to (app name)**. Unverified production apps are limited to 100 users, which is far more than needed.
+4. **Reconnect each Google account once** from the Pi's `http://localhost:8080/control`. Tokens issued while the app was in Testing keep their 7-day expiry; tokens issued after publishing do not expire on a timer.
+
+After this, a refresh token only stops working if you revoke access, change your Google password (for some account types), leave it unused for 6 months, or exceed Google's per-account token limit. Reconnecting the same Google account now updates the existing connection in place, keeping its calendar selections. If a token is ever revoked, the display status reads **Reconnect Google Calendar** instead of a generic sync error.
 
 The implementation uses Google's supported OAuth authorization-code flow and Calendar REST endpoints. It requests `singleEvents=true` and `showDeleted=true`; this expands recurring events and makes cancelled recurring instances available to the sync code. All-day Google events use their date/end-date semantics, while timed events are normalized to `America/Regina` for display. The cache is retained when a sync fails.
 

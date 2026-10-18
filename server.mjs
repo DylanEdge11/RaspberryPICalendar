@@ -4,7 +4,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { URL, URLSearchParams } from "node:url";
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createSign, randomBytes, timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { createPhotosPicker } from "./photos-picker.mjs";
 import { createUpdateControl } from "./phone-updates.mjs";
@@ -19,6 +19,8 @@ const HOST = process.env.APP_HOST || "0.0.0.0";
 const PORT = Number(process.env.APP_PORT || 8080);
 const TIMEZONE = process.env.TIMEZONE || "America/Regina";
 const SYNC_INTERVAL_MIN = clampInteger(process.env.CALENDAR_SYNC_INTERVAL_MIN || 15, 5, 1440);
+// After someone browses to another week/month from the phone, the display returns to "today" on its own.
+const AUTO_RETURN_MIN = clampInteger(process.env.AUTO_RETURN_TO_TODAY_MIN || 30, 1, 1440);
 const DATA_DIR = path.resolve(process.env.APP_DATA_DIR || path.join(ROOT_DIR, "data"));
 const DB_PATH = path.join(DATA_DIR, "calendar.sqlite");
 const PHOTO_ORIGINAL_DIR = path.join(DATA_DIR, "photos", "original");
@@ -31,6 +33,13 @@ const MAX_PHOTO_STORAGE_BYTES = clampNumber(process.env.MAX_PHOTO_STORAGE_BYTES 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const COOKIE_NAME = "family_calendar_session";
+const RECONNECT_PREFIX = "Reconnect needed:";
+// A service account reads calendars shared with its email address; it needs no browser sign-in and never expires.
+const SERVICE_ACCOUNT_ID = "service-account";
+const SERVICE_ACCOUNT_KEY = process.env.GOOGLE_SERVICE_ACCOUNT_KEY || "";
+const SERVICE_CALENDAR_IDS = (process.env.GOOGLE_CALENDAR_IDS || "").split(",").map((id) => id.trim()).filter(Boolean);
+const SOURCE_COLORS = ["#6d7bea", "#e67c73", "#33b679", "#f6bf26", "#8e24aa", "#039be5", "#f4511e", "#616161"];
+const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
 const SECURITY_HEADERS = {
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
@@ -43,6 +52,8 @@ const DEFAULT_SETTINGS = {
   weather_duration: "hourly",
   view: "week",
   anchor_date: todayKey(),
+  follow_today: "true",
+  manual_until: "",
   week_start: "monday",
   weekly_start_hour: "6",
   weekly_end_hour: "22",
@@ -85,6 +96,7 @@ await initializeStorage();
 const db = new DatabaseSync(DB_PATH);
 initializeDatabase();
 initializeDefaultSettings();
+initializeServiceAccount();
 try { fs.chmodSync(DB_PATH, 0o600); } catch { /* Windows does not expose POSIX modes. */ }
 
 let sharp = null;
@@ -230,6 +242,37 @@ function initializeDatabase() {
   if (version < 1) setSetting("schema_version", "1");
 }
 
+function readServiceAccountKey() {
+  let key;
+  try {
+    key = JSON.parse(fs.readFileSync(path.resolve(SERVICE_ACCOUNT_KEY), "utf8"));
+  } catch {
+    throw httpError(503, "GOOGLE_SERVICE_ACCOUNT_KEY could not be read as a JSON key file");
+  }
+  if (!key.client_email || !key.private_key) throw httpError(503, "The service account key file is missing client_email or private_key");
+  return key;
+}
+
+function initializeServiceAccount() {
+  if (!SERVICE_ACCOUNT_KEY) {
+    db.prepare("DELETE FROM google_accounts WHERE id = ?").run(SERVICE_ACCOUNT_ID);
+    return;
+  }
+  let email = null;
+  try { email = readServiceAccountKey().client_email; } catch { /* The sync status reports the unreadable key. */ }
+  db.prepare(`
+    INSERT INTO google_accounts(id, label, email, token_path, created_at) VALUES(?, 'Shared calendars', ?, '', ?)
+    ON CONFLICT(id) DO UPDATE SET email = excluded.email
+  `).run(SERVICE_ACCOUNT_ID, email, new Date().toISOString());
+  // Calendars removed from GOOGLE_CALENDAR_IDS disappear from the display.
+  const keep = new Set(SERVICE_CALENDAR_IDS);
+  for (const row of db.prepare("SELECT calendar_id FROM calendar_sources WHERE account_id = ?").all(SERVICE_ACCOUNT_ID)) {
+    if (keep.has(row.calendar_id)) continue;
+    db.prepare("DELETE FROM calendar_sources WHERE account_id = ? AND calendar_id = ?").run(SERVICE_ACCOUNT_ID, row.calendar_id);
+    db.prepare("DELETE FROM calendar_events WHERE account_id = ? AND calendar_id = ?").run(SERVICE_ACCOUNT_ID, row.calendar_id);
+  }
+}
+
 function initializeDefaultSettings() {
   for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
     db.prepare("INSERT OR IGNORE INTO settings(key, value) VALUES(?, ?)").run(key, String(value));
@@ -250,11 +293,16 @@ function setSetting(key, value) {
 
 function readSettings() {
   const values = Object.fromEntries(db.prepare("SELECT key, value FROM settings").all().map((row) => [row.key, row.value]));
+  // The display follows the real date unless someone recently browsed elsewhere from the phone.
+  const manualUntil = Date.parse(values.manual_until || "");
+  const followToday = values.follow_today !== "false" || !Number.isFinite(manualUntil) || manualUntil <= Date.now();
   return {
     weather_city: values.weather_city || "Regina",
     weather_duration: values.weather_duration === "weekly" ? "weekly" : "hourly",
     view: values.view === "month" ? "month" : "week",
-    anchor_date: isDateKey(values.anchor_date) ? values.anchor_date : todayKey(),
+    anchor_date: !followToday && isDateKey(values.anchor_date) ? values.anchor_date : todayKey(),
+    follow_today: followToday,
+    manual_until: followToday ? "" : new Date(manualUntil).toISOString(),
     week_start: values.week_start === "sunday" ? "sunday" : "monday",
     weekly_start_hour: clampInteger(values.weekly_start_hour ?? 6, 0, 23),
     weekly_end_hour: clampInteger(values.weekly_end_hour ?? 22, 1, 24),
@@ -294,6 +342,9 @@ function updateSettings(patch) {
   if (patch.anchor_date !== undefined) {
     if (!isDateKey(patch.anchor_date)) throw httpError(400, "anchor_date must be YYYY-MM-DD");
     next.anchor_date = patch.anchor_date;
+    const showsToday = periodContains(next, todayKey());
+    next.follow_today = showsToday;
+    next.manual_until = showsToday ? "" : new Date(Date.now() + AUTO_RETURN_MIN * 60_000).toISOString();
   }
   if (patch.week_start !== undefined) {
     if (!['monday', 'sunday'].includes(patch.week_start)) throw httpError(400, "week_start must be monday or sunday");
@@ -398,6 +449,11 @@ function periodRange(settings = readSettings()) {
   return { start, end: addDays(start, 7) };
 }
 
+function periodContains(settings, dateKey) {
+  const range = periodRange(settings);
+  return dateKey >= range.start && dateKey < range.end;
+}
+
 function getPeriodInfo(settings = readSettings()) {
   const range = periodRange(settings);
   return { ...range, view: settings.view };
@@ -405,6 +461,7 @@ function getPeriodInfo(settings = readSettings()) {
 
 function getSyncStatus() {
   const row = db.prepare("SELECT last_attempt_at, last_success_at, error FROM sync_status WHERE id = 1").get() || {};
+  const needsReconnect = APP_MODE === "production" && Boolean(db.prepare("SELECT 1 FROM google_accounts WHERE last_error LIKE ? LIMIT 1").get(`${RECONNECT_PREFIX}%`));
   const stale = APP_MODE === "production" && (!row.last_success_at || row.error || Date.now() - Date.parse(row.last_success_at) > SYNC_INTERVAL_MIN * 2 * 60_000);
   return {
     mode: APP_MODE,
@@ -412,7 +469,8 @@ function getSyncStatus() {
     last_success_at: row.last_success_at || null,
     error: row.error || null,
     stale: Boolean(stale),
-    label: APP_MODE === "demo" ? "Demo content" : stale ? "Calendar sync needs attention" : "Calendar synced"
+    needs_reconnect: needsReconnect,
+    label: APP_MODE === "demo" ? "Demo content" : needsReconnect ? "Reconnect Google Calendar" : stale ? "Calendar sync needs attention" : "Calendar synced"
   };
 }
 
@@ -835,7 +893,7 @@ function redirectUri(req) {
   throw httpError(503, "Set GOOGLE_REDIRECT_URI. Use an exact HTTPS callback on an owned host, or start the OAuth flow from the Pi itself with http://localhost.");
 }
 
-function googleAuthorizeUrl(req, state, scope = "https://www.googleapis.com/auth/calendar.readonly") {
+function googleAuthorizeUrl(req, state, scope = CALENDAR_SCOPE) {
   const client = readClientSecrets();
   const params = new URLSearchParams({
     client_id: client.clientId,
@@ -894,6 +952,28 @@ function readToken(account) {
   }
 }
 
+let serviceToken = null;
+
+async function getServiceAccessToken() {
+  if (serviceToken && serviceToken.expiresAt > Date.now() + 60_000) return serviceToken.accessToken;
+  const key = readServiceAccountKey();
+  const tokenUri = key.token_uri || "https://oauth2.googleapis.com/token";
+  const now = Math.floor(Date.now() / 1000);
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const unsigned = `${encode({ alg: "RS256", typ: "JWT" })}.${encode({ iss: key.client_email, scope: CALENDAR_SCOPE, aud: tokenUri, iat: now, exp: now + 3600 })}`;
+  const signature = createSign("RSA-SHA256").update(unsigned).sign(key.private_key, "base64url");
+  const response = await fetch(tokenUri, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: `${unsigned}.${signature}` }),
+    signal: AbortSignal.timeout(15_000)
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.access_token) throw httpError(502, `Service account sign-in failed${payload.error_description ? `: ${payload.error_description}` : ""}`);
+  serviceToken = { accessToken: payload.access_token, expiresAt: Date.now() + Number(payload.expires_in || 3600) * 1000 };
+  return serviceToken.accessToken;
+}
+
 async function saveGoogleConnection(token) {
   // Calendar's primary ID identifies the account without requesting profile scopes.
   const primaryUrl = "https://www.googleapis.com/calendar/v3/calendars/primary";
@@ -923,6 +1003,7 @@ async function saveGoogleConnection(token) {
 }
 
 function disconnectGoogleAccount(id) {
+  if (id === SERVICE_ACCOUNT_ID) throw httpError(400, "Remove GOOGLE_SERVICE_ACCOUNT_KEY from the configuration to disconnect shared calendars");
   if (syncInProgress || accountMutationInProgress) throw httpError(409, "Calendar sync is running. Wait a moment and try disconnecting again.");
   const account = db.prepare("SELECT * FROM google_accounts WHERE id = ?").get(id);
   if (!account) throw httpError(404, "Google connection not found");
@@ -936,6 +1017,7 @@ function disconnectGoogleAccount(id) {
 }
 
 async function getAccessToken(account) {
+  if (account.id === SERVICE_ACCOUNT_ID) return getServiceAccessToken();
   const token = readToken(account);
   if (token.access_token && Number(token.expires_at || 0) > Date.now() + 60_000) return token.access_token;
   if (!token.refresh_token) throw httpError(502, "Google authorization expired; reconnect this account");
@@ -947,7 +1029,11 @@ async function getAccessToken(account) {
     signal: AbortSignal.timeout(15_000)
   });
   const refreshed = await response.json().catch(() => ({}));
-  if (!response.ok || !refreshed.access_token) throw httpError(502, "Google refresh failed; reconnect this account");
+  if (refreshed.error === "invalid_grant") {
+    // Google revoked the refresh token. In an OAuth app left in "Testing" status this happens every 7 days.
+    throw httpError(401, `${RECONNECT_PREFIX} Google sign-in for ${account.label || "this account"} expired or was revoked. If this repeats weekly, publish the OAuth app to "In production" (see README).`);
+  }
+  if (!response.ok || !refreshed.access_token) throw httpError(502, "Google token refresh failed; will retry on the next sync");
   const updated = { ...token, ...refreshed, refresh_token: token.refresh_token, expires_at: Date.now() + Number(refreshed.expires_in || 3600) * 1000 };
   writePrivateJson(safeDataPath(account.token_path), updated);
   return updated.access_token;
@@ -959,6 +1045,10 @@ async function googleJsonForAccount(account, url, options = {}) {
     return await googleJson(url, token, options);
   } catch (error) {
     if (error.statusCode !== 401) throw error;
+    if (account.id === SERVICE_ACCOUNT_ID) {
+      serviceToken = null;
+      return googleJson(url, await getServiceAccessToken(), options);
+    }
     const refreshed = readToken(account);
     refreshed.expires_at = 0;
     writePrivateJson(safeDataPath(account.token_path), refreshed);
@@ -1049,7 +1139,28 @@ function normalizeGoogleEvent(event, color) {
   return { title: event.summary || "Untitled event", description: event.description || "", location: event.location || "", all_day: false, start_date: start.date, end_date: end.date, start_local: `${start.date}T${start.time}:00`, end_local: `${end.date}T${end.time}:00`, start_ms: startMs, end_ms: endMs, color };
 }
 
+async function refreshServiceSources(account) {
+  // Shared calendars do not appear in a service account's calendar list, so they are named in GOOGLE_CALENDAR_IDS.
+  const insert = db.prepare(`
+    INSERT INTO calendar_sources(id, account_id, calendar_id, summary, description, color, enabled, updated_at)
+    VALUES(?, ?, ?, ?, ?, ?, 1, ?)
+    ON CONFLICT(account_id, calendar_id) DO UPDATE SET summary = excluded.summary, description = excluded.description, updated_at = excluded.updated_at
+  `);
+  const failures = [];
+  for (const [index, calendarId] of SERVICE_CALENDAR_IDS.entries()) {
+    try {
+      const calendar = await googleJsonForAccount(account, `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}`);
+      insert.run(`${account.id}::${calendarId}`, account.id, calendarId, calendar.summary || calendarId, calendar.description || "", SOURCE_COLORS[index % SOURCE_COLORS.length], new Date().toISOString());
+    } catch (error) {
+      if (error.statusCode !== 404 && error.statusCode !== 403) throw error;
+      failures.push(calendarId);
+    }
+  }
+  return failures.length ? `Not shared with ${account.email || "the service account"} yet: ${failures.join(", ")}` : null;
+}
+
 async function refreshGoogleSources(account) {
+  if (account.id === SERVICE_ACCOUNT_ID) return refreshServiceSources(account);
   const payload = await googleJsonForAccount(account, "https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=reader&showHidden=false&maxResults=250");
   const now = new Date().toISOString();
   const insert = db.prepare(`
@@ -1076,11 +1187,12 @@ async function syncCalendars() {
   try {
     for (const account of accounts) {
       try {
-        await refreshGoogleSources(account);
+        const warning = await refreshGoogleSources(account);
         const sources = db.prepare("SELECT * FROM calendar_sources WHERE account_id = ? AND enabled = 1").all(account.id);
         sourceCount += sources.length;
         await syncAccountSources(account, sources, range);
-        db.prepare("UPDATE google_accounts SET last_error = NULL WHERE id = ?").run(account.id);
+        db.prepare("UPDATE google_accounts SET last_error = ? WHERE id = ?").run(warning ?? null, account.id);
+        if (warning) errors.push(warning);
       } catch (error) {
         const message = error.status ? error.message : `Google sync failed for ${account.label}`;
         errors.push(message);
@@ -1349,6 +1461,11 @@ server.on("clientError", (error, socket) => {
   socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
 });
 
+function currentPeriodKey() {
+  const settings = readSettings();
+  return `${todayKey()}:${settings.view}:${settings.anchor_date}:${settings.follow_today}`;
+}
+
 function log(level, message, extra = {}) {
   console.log(JSON.stringify({ time: new Date().toISOString(), level, message, ...extra }));
 }
@@ -1378,6 +1495,15 @@ if (shouldStartServer && APP_MODE === "production" && !adminPinIsConfigured()) {
     }
   }, 25_000);
   pingTimer.unref();
+  // Push a fresh state when the date rolls over or a manual view expires, so the display moves on by itself.
+  let lastPeriodKey = currentPeriodKey();
+  const rolloverTimer = setInterval(() => {
+    const key = currentPeriodKey();
+    if (key === lastPeriodKey) return;
+    lastPeriodKey = key;
+    broadcastState();
+  }, 30_000);
+  rolloverTimer.unref();
   const syncTimer = setInterval(() => { syncCalendars().catch((error) => log("error", "Scheduled calendar sync failed", { message: error.message })); }, SYNC_INTERVAL_MIN * 60_000);
   syncTimer.unref();
   if (APP_MODE === "production") setTimeout(() => { syncCalendars().catch((error) => log("error", "Initial calendar sync failed", { message: error.message })); }, 1000).unref();
@@ -1391,8 +1517,11 @@ export {
   addMonths,
   dayOfWeek,
   getPeriodInfo,
+  getServiceAccessToken,
   isDateKey,
   makeDemoEvents,
+  periodContains,
   periodRange,
+  readSettings,
   startOfWeek
 };

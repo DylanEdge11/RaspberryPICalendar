@@ -201,7 +201,8 @@
     if (!app.state) return;
     const { settings, calendar } = app.state;
     dom.controlModeLabel.textContent = app.state.mode === "demo" ? "DISPLAY CONTROLS · DEMO" : "DISPLAY CONTROLS";
-    dom.controlPeriod.textContent = `${settings.view === "month" ? "Month" : "Week"} · ${periodText(app.state)}`;
+    const returnTime = settings.manual_until ? new Intl.DateTimeFormat(undefined, { timeZone: app.state.timezone, hour: "numeric", minute: "2-digit" }).format(new Date(settings.manual_until)) : "";
+    dom.controlPeriod.textContent = `${settings.view === "month" ? "Month" : "Week"} · ${periodText(app.state)}${returnTime ? ` · returns to today at ${returnTime}` : " · follows today"}`;
     document.querySelectorAll("[data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === settings.view));
     dom.weekStart.value = settings.week_start;
     dom.weeklyStartHour.value = settings.weekly_start_hour ?? 6;
@@ -278,6 +279,10 @@
     dom.googleAccountList.innerHTML = app.google.accounts.map((account) => {
       const sources = app.google.sources.filter((source) => source.account_id === account.id);
       const sourceHtml = sources.length ? `<div class="calendar-source-list">${sources.map((source) => `<div class="calendar-colour-row"><label class="calendar-source"><input type="checkbox" data-source-id="${escapeHtml(source.id)}" ${source.enabled ? "checked" : ""}><span>${escapeHtml(source.summary)}</span></label><div class="calendar-colour-actions"><label>Colour <input type="color" data-colour-id="${escapeHtml(source.id)}" aria-label="Colour for ${escapeHtml(source.summary)}" value="${/^#[0-9a-f]{6}$/i.test(source.color || '') ? source.color : '#6d7bea'}"></label><button type="button" class="secondary-button" data-reset-colour="${escapeHtml(source.id)}" ${source.custom_color ? '' : 'disabled'}>Use Google colour</button></div></div>`).join("")}</div><p class="muted-copy">Colours save automatically on this display only; your Google calendars are unchanged.</p><p class="save-message" data-colour-message role="status"></p>` : `<small>No readable calendars returned yet.</small>`;
+      if (account.id === "service-account") {
+        // Shared calendars come from the Pi's configuration, so they are not disconnected here.
+        return `<div class="google-account"><strong>${escapeHtml(account.label)}${account.email ? ` · ${escapeHtml(account.email)}` : ""}</strong><small>Share each calendar with this address in Google Calendar, then add its ID to GOOGLE_CALENDAR_IDS.</small>${account.last_error ? `<small class="form-error">${escapeHtml(account.last_error)}</small>` : ""}${sourceHtml}</div>`;
+      }
       return `<div class="google-account"><strong>${escapeHtml(account.label)}</strong><small>Connected ${escapeHtml(new Date(account.created_at).toLocaleString())}</small>${account.last_error ? `<small class="form-error">${escapeHtml(account.last_error)}</small>` : ""}${sourceHtml}<button type="button" class="secondary-button" data-disconnect-id="${escapeHtml(account.id)}">Disconnect account</button></div>`;
     }).join("");
     dom.googleAccountList.querySelectorAll("[data-source-id]").forEach((input) => input.addEventListener("change", saveGoogleSources));

@@ -201,7 +201,7 @@
   }
 
   function periodKey(state) {
-    return `${state.settings.view}:${state.settings.anchor_date}:${state.settings.week_start}`;
+    return `${state.today}:${state.settings.view}:${state.settings.anchor_date}:${state.settings.week_start}`;
   }
 
   function syncKey(state) {
@@ -536,6 +536,17 @@
     dom.clock.textContent = new Intl.DateTimeFormat(undefined, { timeZone: app.state.timezone, hour: "numeric", minute: "2-digit" }).format(new Date());
   }
 
+  function localTodayKey() {
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: app.state.timezone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+    const values = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day}`;
+  }
+
+  function checkDateRollover() {
+    // Backup for a missed server push: refetch once the wall-clock date no longer matches the shown "today".
+    if (app.state && localTodayKey() !== app.state.today) loadState().catch(() => {});
+  }
+
   function updateNightMode() {
     if (!app.state) return;
     const { settings } = app.state;
@@ -595,6 +606,7 @@
     connectUpdates();
     window.setInterval(updateClock, 30_000);
     window.setInterval(updateNightMode, 30_000);
+    window.setInterval(checkDateRollover, 60_000);
   }
 
   document.addEventListener("visibilitychange", () => {
