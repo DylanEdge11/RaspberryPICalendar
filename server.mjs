@@ -7,6 +7,7 @@ import { URL, URLSearchParams } from "node:url";
 import { createHash, createSign, randomBytes, timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { createPhotosPicker } from "./photos-picker.mjs";
+import { createImmichSync } from "./immich.mjs";
 import { createUpdateControl } from "./phone-updates.mjs";
 
 import { createWeatherService } from "./weather.mjs";
@@ -19,6 +20,7 @@ const HOST = process.env.APP_HOST || "0.0.0.0";
 const PORT = Number(process.env.APP_PORT || 8080);
 const TIMEZONE = process.env.TIMEZONE || "America/Regina";
 const SYNC_INTERVAL_MIN = clampInteger(process.env.CALENDAR_SYNC_INTERVAL_MIN || 15, 5, 1440);
+const IMMICH_SYNC_INTERVAL_MIN = clampInteger(process.env.IMMICH_SYNC_INTERVAL_MIN || 15, 1, 1440);
 // After someone browses to another week/month from the phone, the display returns to "today" on its own.
 const AUTO_RETURN_MIN = clampInteger(process.env.AUTO_RETURN_TO_TODAY_MIN || 30, 1, 1440);
 const DATA_DIR = path.resolve(process.env.APP_DATA_DIR || path.join(ROOT_DIR, "data"));
@@ -140,6 +142,15 @@ const picker = createPhotosPicker({
   withSlot: withUploadSlot,
   hasPhoto: (id) => Boolean(db.prepare("SELECT id FROM photos WHERE id=?").get(id)),
   savePhoto: (data, filename, id) => processPhotoPart({ data, filename }, id)
+});
+const immich = createImmichSync({
+  baseUrl: process.env.IMMICH_URL,
+  apiKey: process.env.IMMICH_API_KEY,
+  albums: (process.env.IMMICH_ALBUMS || "").split(",").map((album) => album.trim()).filter(Boolean),
+  withSlot: withUploadSlot,
+  listPhotoIds: () => db.prepare("SELECT id FROM photos WHERE id LIKE 'photo_immich_%'").all().map((row) => row.id),
+  savePhoto: (data, filename, id) => processPhotoPart({ data, filename }, id),
+  removePhoto: (id) => removePhoto(id)
 });
 
 function clampInteger(value, min, max) {
@@ -1246,7 +1257,7 @@ async function handleRequest(req, res) {
     requireAdmin(req);
     if (method === 'GET') return sendJson(res, 200, phoneUpdates.status());
     if (method === 'POST') {
-      if (pendingUploads || picker.status().busy || ['selecting', 'ready', 'importing'].includes(picker.status().job?.phase) || photosConnecting || syncInProgress || accountMutationInProgress) {
+      if (pendingUploads || immich.busy() || picker.status().busy || ['selecting', 'ready', 'importing'].includes(picker.status().job?.phase) || photosConnecting || syncInProgress || accountMutationInProgress) {
         throw httpError(409, 'Wait for photo imports, uploads, or calendar syncing to finish before updating.');
       }
       return sendJson(res, 202, phoneUpdates.request());
@@ -1334,6 +1345,16 @@ async function handleRequest(req, res) {
     return sendJson(res, 200, { ok: true });
   }
 
+  if (url.pathname === "/api/immich/status" && method === "GET") {
+    requireAdmin(req);
+    return sendJson(res, 200, immich.status());
+  }
+  if (url.pathname === "/api/immich/sync" && method === "POST") {
+    requireAdmin(req);
+    if (!immich.configured) throw httpError(409, "Immich is not configured. Set IMMICH_URL, IMMICH_API_KEY and IMMICH_ALBUMS on the Pi.");
+    await immich.sync();
+    return sendJson(res, 200, immich.status());
+  }
   if (url.pathname.startsWith("/api/google-photos/")) {
     const session = requireAdmin(req);
     const action = url.pathname.slice("/api/google-photos/".length);
@@ -1507,6 +1528,11 @@ if (shouldStartServer && APP_MODE === "production" && !adminPinIsConfigured()) {
   const syncTimer = setInterval(() => { syncCalendars().catch((error) => log("error", "Scheduled calendar sync failed", { message: error.message })); }, SYNC_INTERVAL_MIN * 60_000);
   syncTimer.unref();
   if (APP_MODE === "production") setTimeout(() => { syncCalendars().catch((error) => log("error", "Initial calendar sync failed", { message: error.message })); }, 1000).unref();
+  if (immich.configured) {
+    const runImmich = () => { if (!phoneUpdates.busy()) immich.sync().catch((error) => log("error", "Immich photo sync failed", { message: error.message })); };
+    setInterval(runImmich, IMMICH_SYNC_INTERVAL_MIN * 60_000).unref();
+    setTimeout(runImmich, 5000).unref();
+  }
 }
 
 export {
