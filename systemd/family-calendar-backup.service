@@ -1,0 +1,12 @@
+[Unit]
+Description=Nightly backup of the family calendar's data, secrets and configuration
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/libexec/family-calendar-backup.py
+Nice=10
+IOSchedulingClass=idle
+UMask=0077
+TimeoutStartSec=30min
+StandardOutput=journal
+StandardError=journal

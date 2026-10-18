@@ -55,7 +55,25 @@
   let updateTimer;
   let updateStartedAt = 0;
 
+  async function refreshBackupStatus() {
+    const element = document.getElementById("backupStatus");
+    if (app.state?.mode === "demo") { element.textContent = ""; return; }
+    try {
+      const status = await requestJson("/api/system/backup");
+      const when = status.updated_at ? new Date(status.updated_at) : null;
+      const label = when ? when.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+      if (!status.installed) element.textContent = "Nightly backups are not set up. On the Pi, run: sudo bash scripts/install-backups.sh";
+      else if (!status.ok) element.textContent = `Last backup failed (${label}): ${status.error || "see the Pi's backup log"}`;
+      else if (Date.now() - when.getTime() > 2 * 86_400_000) element.textContent = `Last backup was ${label}, more than two days ago. Check the Pi's backup timer.`;
+      else element.textContent = `Last nightly backup: ${label}.`;
+      element.classList.toggle("form-error", !status.installed || !status.ok || Date.now() - (when?.getTime() || 0) > 2 * 86_400_000);
+    } catch {
+      element.textContent = "";
+    }
+  }
+
   async function refreshUpdater() {
+    refreshBackupStatus();
     clearTimeout(updateTimer);
     try {
       if (updateStartedAt) {
@@ -168,6 +186,7 @@
   function periodText(state) {
     if (!state) return "Loading…";
     if (state.settings.view === "month") return formatDate(`${state.settings.anchor_date.slice(0, 7)}-01`, { month: "long", year: "numeric" });
+    if (state.settings.view === "today") return formatDate(state.settings.anchor_date, { weekday: "long", month: "short", day: "numeric" });
     const start = state.period.start;
     const end = addDays(state.period.end, -1);
     return `${formatDate(start, { month: "short", day: "numeric" })} – ${formatDate(end, { month: "short", day: "numeric", year: "numeric" })}`;
@@ -208,7 +227,7 @@
     const { settings, calendar } = app.state;
     dom.controlModeLabel.textContent = app.state.mode === "demo" ? "DISPLAY CONTROLS · DEMO" : "DISPLAY CONTROLS";
     const returnTime = settings.manual_until ? new Intl.DateTimeFormat(undefined, { timeZone: app.state.timezone, hour: "numeric", minute: "2-digit" }).format(new Date(settings.manual_until)) : "";
-    dom.controlPeriod.textContent = `${settings.view === "month" ? "Month" : "Week"} · ${periodText(app.state)}${returnTime ? ` · returns to today at ${returnTime}` : " · follows today"}`;
+    dom.controlPeriod.textContent = `${{ month: "Month", today: "Today", week: "Week" }[settings.view] || "Week"} · ${periodText(app.state)}${returnTime ? ` · returns to today at ${returnTime}` : " · follows today"}`;
     document.querySelectorAll("[data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === settings.view));
     dom.weekStart.value = settings.week_start;
     dom.weeklyStartHour.value = settings.weekly_start_hour ?? 6;
