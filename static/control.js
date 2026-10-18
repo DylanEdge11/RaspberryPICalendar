@@ -22,6 +22,8 @@
     weeklyEndHour: document.getElementById("weeklyEndHour"),
     slideshowSeconds: document.getElementById("slideshowSeconds"),
     showPhotoCaptions: document.getElementById("showPhotoCaptions"),
+    photoMotion: document.getElementById("photoMotion"),
+    photoModeMinutes: document.getElementById("photoModeMinutes"),
     displayTitleInput: document.getElementById("displayTitleInput"),
     overnightEnabled: document.getElementById("overnightEnabled"),
     overnightStart: document.getElementById("overnightStart"),
@@ -212,6 +214,8 @@
     document.getElementById("weatherDuration").value = settings.weather_duration;
     dom.slideshowSeconds.value = settings.slideshow_seconds;
     dom.showPhotoCaptions.checked = Boolean(settings.show_photo_captions);
+    dom.photoMotion.checked = settings.photo_motion !== false;
+    dom.photoModeMinutes.value = String(settings.photo_mode_minutes ?? 30);
     dom.displayTitleInput.value = settings.display_title;
     dom.overnightEnabled.checked = settings.overnight_enabled;
     dom.overnightStart.value = settings.overnight_start;
@@ -239,7 +243,9 @@
       dom.photoList.innerHTML = `<p class="muted-copy">No photos uploaded yet.</p>`;
       return;
     }
-    dom.photoList.innerHTML = app.photos.map((photo) => `<div class="photo-list-item"><img src="${escapeHtml(photo.url)}" alt="${escapeHtml(photo.original_name)}" loading="lazy"><small>${escapeHtml(photo.original_name)}</small>${photo.demo ? "" : `<button type="button" data-remove-photo="${escapeHtml(photo.id)}" aria-label="Remove ${escapeHtml(photo.original_name)}">×</button>`}</div>`).join("");
+    // Immich photos come back on the next sync if removed here, so they are managed in the Immich album instead.
+    const action = (photo) => photo.demo ? "" : photo.id.startsWith("photo_immich_") ? `<span class="photo-source-badge" title="Remove it from the Immich album to take it off the display">Immich</span>` : `<button type="button" data-remove-photo="${escapeHtml(photo.id)}" aria-label="Remove ${escapeHtml(photo.original_name)}">×</button>`;
+    dom.photoList.innerHTML = app.photos.map((photo) => `<div class="photo-list-item"><img src="${escapeHtml(photo.url)}" alt="${escapeHtml(photo.original_name)}" loading="lazy"><small>${escapeHtml(photo.original_name)}</small>${action(photo)}</div>`).join("");
     dom.photoList.querySelectorAll("[data-remove-photo]").forEach((button) => button.addEventListener("click", () => removePhoto(button.dataset.removePhoto)));
   }
 
@@ -258,6 +264,8 @@
   function renderImmich(status) {
     immichUi.card.classList.toggle("hidden", !status.configured);
     if (!status.configured) return;
+    // With Immich doing the work, the Google Photos importer is folded away to keep the page short.
+    if (!immichUi.folded) { document.getElementById("photosPicker").open = false; immichUi.folded = true; }
     const albums = status.album_names.length ? status.album_names.join(", ") : "your album";
     const when = status.synced_at ? new Date(status.synced_at).toLocaleString() : "not yet";
     const summary = status.busy ? "Syncing with Immich…" : `${status.photos} photo${status.photos === 1 ? "" : "s"} from ${albums} · last checked ${when}`;
@@ -407,6 +415,8 @@
         weather_duration: document.getElementById("weatherDuration").value,
         slideshow_seconds: Number(dom.slideshowSeconds.value),
         show_photo_captions: dom.showPhotoCaptions.checked,
+        photo_motion: dom.photoMotion.checked,
+        photo_mode_minutes: Number(dom.photoModeMinutes.value),
         display_title: dom.displayTitleInput.value,
         overnight_enabled: dom.overnightEnabled.checked,
         overnight_start: dom.overnightStart.value,

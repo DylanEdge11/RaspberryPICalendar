@@ -36,6 +36,8 @@ const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const COOKIE_NAME = "family_calendar_session";
 const RECONNECT_PREFIX = "Reconnect needed:";
+// How long Photo Mode stays up without a touch before the calendar returns; 0 keeps it open.
+const PHOTO_MODE_MINUTES = [0, 5, 15, 30, 60, 120];
 // A service account reads calendars shared with its email address; it needs no browser sign-in and never expires.
 const SERVICE_ACCOUNT_ID = "service-account";
 const SERVICE_ACCOUNT_KEY = process.env.GOOGLE_SERVICE_ACCOUNT_KEY || "";
@@ -61,6 +63,8 @@ const DEFAULT_SETTINGS = {
   weekly_end_hour: "22",
   slideshow_seconds: "12",
   show_photo_captions: "false",
+  photo_motion: "true",
+  photo_mode_minutes: "30",
   overnight_enabled: "true",
   overnight_start: "22:30",
   overnight_end: "06:30",
@@ -319,6 +323,8 @@ function readSettings() {
     weekly_end_hour: clampInteger(values.weekly_end_hour ?? 22, 1, 24),
     slideshow_seconds: clampInteger(values.slideshow_seconds || 12, 5, 60),
     show_photo_captions: values.show_photo_captions === "true",
+    photo_motion: values.photo_motion !== "false",
+    photo_mode_minutes: PHOTO_MODE_MINUTES.includes(Number(values.photo_mode_minutes)) ? Number(values.photo_mode_minutes) : 30,
     overnight_enabled: values.overnight_enabled !== "false",
     overnight_start: isTimeKey(values.overnight_start) ? values.overnight_start : "22:30",
     overnight_end: isTimeKey(values.overnight_end) ? values.overnight_end : "06:30",
@@ -369,6 +375,14 @@ function updateSettings(patch) {
     next.slideshow_seconds = seconds;
   }
   if (patch.overnight_enabled !== undefined) next.overnight_enabled = Boolean(patch.overnight_enabled);
+  if (patch.photo_motion !== undefined) {
+    if (typeof patch.photo_motion !== "boolean") throw httpError(400, "photo_motion must be true or false");
+    next.photo_motion = patch.photo_motion;
+  }
+  if (patch.photo_mode_minutes !== undefined) {
+    if (!PHOTO_MODE_MINUTES.includes(patch.photo_mode_minutes)) throw httpError(400, `photo_mode_minutes must be one of ${PHOTO_MODE_MINUTES.join(", ")}`);
+    next.photo_mode_minutes = patch.photo_mode_minutes;
+  }
   if (patch.show_photo_captions !== undefined) {
     if (typeof patch.show_photo_captions !== "boolean") throw httpError(400, "show_photo_captions must be true or false");
     next.show_photo_captions = patch.show_photo_captions;

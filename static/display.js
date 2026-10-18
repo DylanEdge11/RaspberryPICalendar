@@ -264,6 +264,7 @@
     const { settings, calendar } = app.state;
     const isDemo = app.state.mode === "demo";
     dom.displayTitle.textContent = settings.display_title;
+    document.getElementById("albumDialog").classList.toggle("no-motion", settings.photo_motion === false);
     dom.modeLabel.textContent = isDemo ? "Family calendar · demo" : "Family calendar";
     dom.viewKicker.textContent = settings.view === "month" ? "THIS MONTH" : "THIS WEEK";
     dom.periodTitle.textContent = formatPeriod(app.state);
@@ -299,7 +300,8 @@
   const detailBody = document.getElementById("detailBody");
   let detailEvents = [];
   function eventButton(event) {
-    return `type="button" data-event="${app.events.indexOf(event)}" aria-label="${escapeHtml(`Show details: ${event.title}`)}"`;
+    const ends = event.all_day ? `${event.end_date}T00:00` : `${event.end_date}T${event.end_time || "23:59"}`;
+    return `type="button" data-event="${app.events.indexOf(event)}" data-ends="${escapeHtml(ends)}" aria-label="${escapeHtml(`Show details: ${event.title}`)}"`;
   }
   function eventWhen(event) {
     const options = { weekday: "short", month: "short", day: "numeric", year: "numeric" };
@@ -364,6 +366,25 @@
         cell.scrollTop = dayScrolls.get(cell.querySelector("[data-day]").dataset.day) || 0;
       });
     }
+    updateTimeMarkers();
+  }
+
+  // Finished events fade and a line marks the current time in today's column,
+  // so the screen answers "what's next?" at a glance.
+  function updateTimeMarkers() {
+    if (!app.state) return;
+    const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: app.state.timezone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date()).map((part) => [part.type, part.value]));
+    const today = `${parts.year}-${parts.month}-${parts.day}`;
+    const nowKey = `${today}T${parts.hour}:${parts.minute}`;
+    dom.calendarMount.querySelectorAll("[data-ends]").forEach((element) => element.classList.toggle("past", element.dataset.ends <= nowKey));
+    const minutes = Number(parts.hour) * 60 + Number(parts.minute);
+    dom.calendarMount.querySelectorAll(".day-canvas").forEach((canvas) => {
+      let line = canvas.querySelector(".now-line");
+      const show = canvas.dataset.date === today && minutes >= TIME_START && minutes <= TIME_END;
+      if (!show) { line?.remove(); return; }
+      if (!line) { line = document.createElement("div"); line.className = "now-line"; line.setAttribute("aria-hidden", "true"); canvas.append(line); }
+      line.style.top = `${((minutes - TIME_START) / 60) * weeklyRowHeight}px`;
+    });
   }
 
   function renderWeek() {
@@ -670,9 +691,26 @@
     window.clearTimeout(frame.timer);
     window.clearTimeout(frame.hideTimer);
     frame.stage.innerHTML = "";
-    albumTrigger.focus();
+    // Only move focus back when someone closed it; an idle timeout should not leave a focus ring.
+    if (Date.now() - lastInteraction < 5000) albumTrigger.focus();
   });
   window.setInterval(updateFrameInfo, 15_000);
+
+  // A wall display should never be left covered: pop-ups close after two minutes
+  // without a touch, and Photo Mode after the time chosen on the phone.
+  const DIALOG_IDLE_MS = 2 * 60_000;
+  let lastInteraction = Date.now();
+  for (const type of ["pointerdown", "keydown", "wheel"]) {
+    document.addEventListener(type, () => { lastInteraction = Date.now(); }, { capture: true, passive: true });
+  }
+  window.setInterval(() => {
+    const idle = Date.now() - lastInteraction;
+    for (const dialog of [weatherDialog, detailDialog]) {
+      if (dialog.open && idle > DIALOG_IDLE_MS) dialog.close();
+    }
+    const minutes = Number(app.state?.settings?.photo_mode_minutes ?? 30);
+    if (albumDialog.open && minutes > 0 && idle > minutes * 60_000) albumDialog.close();
+  }, 15_000);
 
   function renderAlbum() {
     // New or removed photos are picked up at the next scene; only an empty album needs an immediate redraw.
@@ -708,7 +746,8 @@
     window.clearInterval(app.photoTimer);
     const seconds = app.state?.settings?.slideshow_seconds || 12;
     app.photoTimer = window.setInterval(() => {
-      if (!document.hidden && app.photos.length > 1) {
+      // The small album card is hidden behind Photo Mode, so it rests while the frame is open.
+      if (!document.hidden && !document.getElementById("albumDialog").open && app.photos.length > 1) {
         app.photoIndex = (app.photoIndex + 1) % app.photos.length;
         renderPhoto();
       }
@@ -789,6 +828,7 @@
     }
     connectUpdates();
     window.setInterval(updateClock, 30_000);
+    window.setInterval(updateTimeMarkers, 30_000);
     window.setInterval(updateNightMode, 30_000);
     window.setInterval(checkDateRollover, 60_000);
   }
