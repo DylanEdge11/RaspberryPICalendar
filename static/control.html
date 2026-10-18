@@ -87,6 +87,12 @@
               <p class="save-message" id="uploadMessage" role="status"></p>
             </form>
             <div class="photo-list" id="photoList"></div>
+            <div class="photos-picker hidden" id="immichCard">
+              <h3>Immich album</h3>
+              <p class="muted-copy">Photos in your Immich album appear here automatically, and removing them from the album removes them here. No sign-in is needed.</p>
+              <p id="immichStatus" class="save-message" role="status" aria-live="polite"></p>
+              <div class="picker-actions"><button class="secondary-button" id="immichSync" type="button">Sync Immich now</button></div>
+            </div>
             <div class="photos-picker" id="photosPicker">
               <h3>Import from Google Photos</h3>
               <p class="muted-copy">Search for your album by name, select up to 100 photos, then import them here. Display-sized copies stay on this Pi until you remove them. New album additions are not imported automatically. Videos are skipped.</p>

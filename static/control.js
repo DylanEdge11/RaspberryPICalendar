@@ -42,6 +42,7 @@
   dom.weeklyStartHour.innerHTML = Array.from({ length: 24 }, (_, h) => `<option value="${h}">${hourLabel(h)}</option>`).join('');
   dom.weeklyEndHour.innerHTML = Array.from({ length: 24 }, (_, i) => `<option value="${i + 1}">${hourLabel(i + 1)}</option>`).join('');
   const photosUi = Object.fromEntries(["Connect", "Start", "Open", "Import", "Cancel", "Disconnect", "Status"].map((name) => [name, document.getElementById(`photos${name}`)]));
+  const immichUi = { card: document.getElementById("immichCard"), status: document.getElementById("immichStatus"), sync: document.getElementById("immichSync") };
   let photosTimer;
   let photosProgress = "";
   const updateButton = document.getElementById('applicationUpdate');
@@ -254,6 +255,34 @@
     }
   }
 
+  function renderImmich(status) {
+    immichUi.card.classList.toggle("hidden", !status.configured);
+    if (!status.configured) return;
+    const albums = status.album_names.length ? status.album_names.join(", ") : "your album";
+    const when = status.synced_at ? new Date(status.synced_at).toLocaleString() : "not yet";
+    const summary = status.busy ? "Syncing with Immich…" : `${status.photos} photo${status.photos === 1 ? "" : "s"} from ${albums} · last checked ${when}`;
+    immichUi.status.textContent = status.error ? `${summary} · ${status.error}` : summary;
+    immichUi.status.classList.toggle("error", Boolean(status.error));
+  }
+
+  async function loadImmich() {
+    try { renderImmich(await requestJson("/api/immich/status")); } catch { immichUi.card.classList.add("hidden"); }
+  }
+
+  immichUi.sync.addEventListener("click", async () => {
+    immichUi.sync.disabled = true;
+    immichUi.status.textContent = "Syncing with Immich…";
+    try {
+      renderImmich(await postJson("/api/immich/sync", {}));
+      await loadPhotos();
+    } catch (error) {
+      immichUi.status.textContent = error.message;
+      immichUi.status.classList.add("error");
+    } finally {
+      immichUi.sync.disabled = false;
+    }
+  });
+
   function setMessage(element, message, error = false) {
     element.textContent = message;
     element.classList.toggle("error", error);
@@ -339,6 +368,7 @@
       showControls();
       await loadState();
       await loadPhotos();
+      await loadImmich();
       await loadGoogle();
       await pickerRequest();
       await refreshUpdater();
@@ -433,6 +463,7 @@
       showControls();
       renderState();
       await loadPhotos();
+      await loadImmich();
       await loadGoogle();
       await pickerRequest();
       await refreshUpdater();

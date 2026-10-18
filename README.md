@@ -300,6 +300,27 @@ Supported inputs are JPEG, PNG, GIF, WebP, AVIF, and HEIC/HEIF only when the Pi'
 
 iPhone users should try HEIC first after installing the Pi dependencies. If the installed ARM image stack cannot decode it, the control page returns a clear error; export/share as JPEG or PNG rather than assuming every iPhone photo is JPEG. Existing uploaded photos are local and continue cycling without internet access.
 
+## Immich album sync (recommended for photos)
+
+If you run [Immich](https://immich.app/) on a computer at home, the Pi can mirror one or more Immich albums onto the display. It uses an Immich API key, which does not expire, so there is no sign-in and no weekly reconnect. Every 15 minutes (`IMMICH_SYNC_INTERVAL_MIN`) the Pi checks the album: new photos are downloaded at screen size (Immich's ~1440px preview), and photos removed from the album are removed from the display. Videos are skipped. Phone uploads and Google Photos imports keep working alongside it.
+
+1. **Find the Immich address.** On a phone or computer on home Wi-Fi, the address you open Immich with, for example `http://192.168.1.50:2283`. Give the Immich computer a fixed (reserved) IP address in your router so it does not change.
+2. **Create the album.** In Immich, create an album such as `Family Calendar` and add photos. It can be your own album or one shared with you.
+3. **Create an API key.** In Immich, click your profile picture → **Account Settings → API Keys → New API Key**. Name it `Family calendar Pi`. If Immich asks for permissions, choose only `album.read`, `asset.read` and `asset.view`. Copy the key; Immich shows it once.
+4. **Configure the Pi:**
+
+```sh
+sudoedit /etc/family-calendar/calendar.env
+# IMMICH_URL=http://192.168.1.50:2283
+# IMMICH_API_KEY=paste-the-key-here
+# IMMICH_ALBUMS=Family Calendar
+sudo systemctl restart family-calendar.service
+```
+
+`IMMICH_ALBUMS` takes album names or album IDs separated by commas. Within a few seconds of the restart, the **Immich album** section on the phone controls shows how many photos were found and when it last checked; **Sync Immich now** checks immediately.
+
+The album is the source of truth: to take a photo off the display, remove it from the Immich album (deleting it only on the Pi brings it back on the next sync). A photo that was already uploaded from a phone is skipped rather than shown twice. Up to 100 new photos are downloaded per sync, within the existing `MAX_PHOTOS`/storage limits, so a large album fills in over a few cycles. If the Immich computer is off, the Pi keeps showing the photos it already has and retries on the next cycle. The Pi only reads from Immich; it never changes or deletes anything there.
+
 ## Google Photos import (optional)
 
 Google changed the Photos APIs in 2025. The Library API now focuses on content created by the app, and the old broad `photoslibrary.readonly`/sharing scopes are no longer the dependable way to enumerate a user's existing daily album. The supported Picker API lets a user explicitly select photos from their library, but it is an interactive selection flow with a session, not a silent “watch this album forever” feed. Google also says picked media URLs are temporary and should not be cached as a permanent source.
