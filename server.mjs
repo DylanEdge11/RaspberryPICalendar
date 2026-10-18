@@ -14,6 +14,8 @@ const HOST = process.env.APP_HOST || "0.0.0.0";
 const PORT = Number(process.env.APP_PORT || 8080);
 const TIMEZONE = process.env.TIMEZONE || "America/Regina";
 const SYNC_INTERVAL_MIN = clampInteger(process.env.CALENDAR_SYNC_INTERVAL_MIN || 15, 5, 1440);
+// After someone browses to another week/month from the phone, the display returns to "today" on its own.
+const AUTO_RETURN_MIN = clampInteger(process.env.AUTO_RETURN_TO_TODAY_MIN || 30, 1, 1440);
 const DATA_DIR = path.resolve(process.env.APP_DATA_DIR || path.join(ROOT_DIR, "data"));
 const DB_PATH = path.join(DATA_DIR, "calendar.sqlite");
 const PHOTO_ORIGINAL_DIR = path.join(DATA_DIR, "photos", "original");
@@ -26,6 +28,7 @@ const MAX_PHOTO_STORAGE_BYTES = clampNumber(process.env.MAX_PHOTO_STORAGE_BYTES 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const COOKIE_NAME = "family_calendar_session";
+const RECONNECT_PREFIX = "Reconnect needed:";
 const SECURITY_HEADERS = {
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
@@ -36,6 +39,8 @@ const SECURITY_HEADERS = {
 const DEFAULT_SETTINGS = {
   view: "week",
   anchor_date: todayKey(),
+  follow_today: "true",
+  manual_until: "",
   week_start: "monday",
   slideshow_seconds: "12",
   overnight_enabled: "true",
@@ -212,9 +217,14 @@ function setSetting(key, value) {
 
 function readSettings() {
   const values = Object.fromEntries(db.prepare("SELECT key, value FROM settings").all().map((row) => [row.key, row.value]));
+  // The display follows the real date unless someone recently browsed elsewhere from the phone.
+  const manualUntil = Date.parse(values.manual_until || "");
+  const followToday = values.follow_today !== "false" || !Number.isFinite(manualUntil) || manualUntil <= Date.now();
   return {
     view: values.view === "month" ? "month" : "week",
-    anchor_date: isDateKey(values.anchor_date) ? values.anchor_date : todayKey(),
+    anchor_date: !followToday && isDateKey(values.anchor_date) ? values.anchor_date : todayKey(),
+    follow_today: followToday,
+    manual_until: followToday ? "" : new Date(manualUntil).toISOString(),
     week_start: values.week_start === "sunday" ? "sunday" : "monday",
     slideshow_seconds: clampInteger(values.slideshow_seconds || 12, 5, 60),
     overnight_enabled: values.overnight_enabled !== "false",
@@ -234,6 +244,9 @@ function updateSettings(patch) {
   if (patch.anchor_date !== undefined) {
     if (!isDateKey(patch.anchor_date)) throw httpError(400, "anchor_date must be YYYY-MM-DD");
     next.anchor_date = patch.anchor_date;
+    const showsToday = periodContains(next, todayKey());
+    next.follow_today = showsToday;
+    next.manual_until = showsToday ? "" : new Date(Date.now() + AUTO_RETURN_MIN * 60_000).toISOString();
   }
   if (patch.week_start !== undefined) {
     if (!['monday', 'sunday'].includes(patch.week_start)) throw httpError(400, "week_start must be monday or sunday");
@@ -334,6 +347,11 @@ function periodRange(settings = readSettings()) {
   return { start, end: addDays(start, 7) };
 }
 
+function periodContains(settings, dateKey) {
+  const range = periodRange(settings);
+  return dateKey >= range.start && dateKey < range.end;
+}
+
 function getPeriodInfo(settings = readSettings()) {
   const range = periodRange(settings);
   return { ...range, view: settings.view };
@@ -341,6 +359,7 @@ function getPeriodInfo(settings = readSettings()) {
 
 function getSyncStatus() {
   const row = db.prepare("SELECT last_attempt_at, last_success_at, error FROM sync_status WHERE id = 1").get() || {};
+  const needsReconnect = APP_MODE === "production" && Boolean(db.prepare("SELECT 1 FROM google_accounts WHERE last_error LIKE ? LIMIT 1").get(`${RECONNECT_PREFIX}%`));
   const stale = APP_MODE === "production" && (!row.last_success_at || row.error || Date.now() - Date.parse(row.last_success_at) > SYNC_INTERVAL_MIN * 2 * 60_000);
   return {
     mode: APP_MODE,
@@ -348,7 +367,8 @@ function getSyncStatus() {
     last_success_at: row.last_success_at || null,
     error: row.error || null,
     stale: Boolean(stale),
-    label: APP_MODE === "demo" ? "Demo content" : stale ? "Calendar sync needs attention" : "Calendar synced"
+    needs_reconnect: needsReconnect,
+    label: APP_MODE === "demo" ? "Demo content" : needsReconnect ? "Reconnect Google Calendar" : stale ? "Calendar sync needs attention" : "Calendar synced"
   };
 }
 
@@ -824,7 +844,11 @@ async function getAccessToken(account) {
     signal: AbortSignal.timeout(15_000)
   });
   const refreshed = await response.json().catch(() => ({}));
-  if (!response.ok || !refreshed.access_token) throw httpError(502, "Google refresh failed; reconnect this account");
+  if (refreshed.error === "invalid_grant") {
+    // Google revoked the refresh token. In an OAuth app left in "Testing" status this happens every 7 days.
+    throw httpError(401, `${RECONNECT_PREFIX} Google sign-in for ${account.label || "this account"} expired or was revoked. If this repeats weekly, publish the OAuth app to "In production" (see README).`);
+  }
+  if (!response.ok || !refreshed.access_token) throw httpError(502, "Google token refresh failed; will retry on the next sync");
   const updated = { ...token, ...refreshed, refresh_token: token.refresh_token, expires_at: Date.now() + Number(refreshed.expires_in || 3600) * 1000 };
   writePrivateJson(safeDataPath(account.token_path), updated);
   return updated.access_token;
@@ -1095,9 +1119,6 @@ async function handleRequest(req, res) {
     if (sessionFromRequest(req)?.token !== savedState.sessionToken) return sendText(res, 403, "This Google pairing must be completed in the same paired browser.");
     if (!code) return sendText(res, 400, "Google authorization was not completed. Return to the control page and try again.");
     const token = await exchangeGoogleCode(req, code);
-    const accountId = `acct_${randomBytes(8).toString("hex")}`;
-    const tokenRelative = path.join("secrets", `${accountId}.json`);
-    writePrivateJson(safeDataPath(tokenRelative), token);
     let email = null;
     try {
       const user = await googleJson("https://www.googleapis.com/oauth2/v2/userinfo", token.access_token);
@@ -1105,8 +1126,18 @@ async function handleRequest(req, res) {
     } catch {
       // The calendar connection remains useful even if optional profile lookup fails.
     }
-    db.prepare("INSERT INTO google_accounts(id, label, email, token_path, created_at) VALUES(?, ?, ?, ?, ?)").run(accountId, email || "Google account", email, tokenRelative, new Date().toISOString());
+    // Reconnecting an existing account replaces its token and keeps its calendar selections.
+    const existing = email ? db.prepare("SELECT * FROM google_accounts WHERE email = ? ORDER BY created_at LIMIT 1").get(email) : null;
+    const accountId = existing?.id || `acct_${randomBytes(8).toString("hex")}`;
+    const tokenRelative = existing?.token_path || path.join("secrets", `${accountId}.json`);
+    writePrivateJson(safeDataPath(tokenRelative), token);
+    if (existing) {
+      db.prepare("UPDATE google_accounts SET last_error = NULL WHERE id = ?").run(accountId);
+    } else {
+      db.prepare("INSERT INTO google_accounts(id, label, email, token_path, created_at) VALUES(?, ?, ?, ?, ?)").run(accountId, email || "Google account", email, tokenRelative, new Date().toISOString());
+    }
     await refreshGoogleSources({ id: accountId, token_path: tokenRelative });
+    syncCalendars().catch((error) => log("error", "Calendar sync after reconnect failed", { message: error.message }));
     return redirect(res, "/control?google=connected");
   }
   if (method === "GET" && url.pathname === "/api/google/accounts") {
@@ -1149,6 +1180,11 @@ server.on("clientError", (error, socket) => {
   socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
 });
 
+function currentPeriodKey() {
+  const settings = readSettings();
+  return `${todayKey()}:${settings.view}:${settings.anchor_date}:${settings.follow_today}`;
+}
+
 function log(level, message, extra = {}) {
   console.log(JSON.stringify({ time: new Date().toISOString(), level, message, ...extra }));
 }
@@ -1178,6 +1214,15 @@ if (shouldStartServer && APP_MODE === "production" && !adminPinIsConfigured()) {
     }
   }, 25_000);
   pingTimer.unref();
+  // Push a fresh state when the date rolls over or a manual view expires, so the display moves on by itself.
+  let lastPeriodKey = currentPeriodKey();
+  const rolloverTimer = setInterval(() => {
+    const key = currentPeriodKey();
+    if (key === lastPeriodKey) return;
+    lastPeriodKey = key;
+    broadcastState();
+  }, 30_000);
+  rolloverTimer.unref();
   const syncTimer = setInterval(() => { syncCalendars().catch((error) => log("error", "Scheduled calendar sync failed", { message: error.message })); }, SYNC_INTERVAL_MIN * 60_000);
   syncTimer.unref();
   if (APP_MODE === "production") setTimeout(() => { syncCalendars().catch((error) => log("error", "Initial calendar sync failed", { message: error.message })); }, 1000).unref();
@@ -1190,6 +1235,8 @@ export {
   getPeriodInfo,
   isDateKey,
   makeDemoEvents,
+  periodContains,
   periodRange,
+  readSettings,
   startOfWeek
 };

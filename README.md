@@ -9,6 +9,7 @@ The first release is intentionally small. It uses one Node.js service, the built
 - A landscape-oriented weekly display at `/`, with a six-week month view.
 - Responsive typography and layout designed around a 1080p monitor; the actual monitor should be measured before choosing a larger target.
 - Demo mode with clearly labelled local sample content and no account access.
+- The display follows the current date automatically: a new week or month appears at midnight with no input. Browsing to another week or month from the phone is temporary and returns to today after `AUTO_RETURN_TO_TODAY_MIN` minutes (default 30), or right away with **Today**.
 - Phone controls at `/control`, including previous/next/today, week/month switching, week-start preference, slideshow timing, quiet hours, display title, upload, and removal.
 - Server-sent updates so a phone view change appears on the display without a manual reload. Browsers without `EventSource` fall back to polling.
 - SQLite-backed display settings and photo metadata.
@@ -73,6 +74,7 @@ APP_DATA_DIR=/var/lib/family-calendar
 TIMEZONE=America/Regina
 ADMIN_PIN=use-a-long-private-pin
 CALENDAR_SYNC_INTERVAL_MIN=15
+AUTO_RETURN_TO_TODAY_MIN=30
 MAX_PHOTOS=500
 MAX_PHOTO_STORAGE_BYTES=2147483648
 GOOGLE_CLIENT_SECRETS=/etc/family-calendar/client_secret.json
@@ -90,6 +92,17 @@ Production refuses to start without `ADMIN_PIN`. Port 8080 is plain HTTP on the 
 5. Complete Google consent in the same browser that started pairing. Repeat the connection for the additional household Google account if needed.
 6. Select the calendars to display. The app requests the narrow read-only scope `https://www.googleapis.com/auth/calendar.readonly` and stores refresh tokens under `APP_DATA_DIR/secrets`.
 7. Confirm the display shows a real event and that the status pill reports a successful sync.
+
+### Stop the weekly Google re-login (required)
+
+Google expires refresh tokens after **7 days** for any OAuth app whose publishing status is **Testing** and that requests calendar scopes. That is why the display stops syncing every week. Code cannot work around it; it is fixed in Google Cloud:
+
+1. Open Google Cloud Console → **Google Auth Platform** (APIs & Services → OAuth consent screen) → **Audience**.
+2. Under *Publishing status*, choose **Publish app** and confirm, so it reads **In production**.
+3. You do **not** need Google verification for a household app. `calendar.readonly` is a sensitive scope, so the consent page will show "Google hasn't verified this app"; choose **Advanced → Go to (app name)**. Unverified production apps are limited to 100 users, which is far more than needed.
+4. **Reconnect each Google account once** from the Pi's `http://localhost:8080/control`. Tokens issued while the app was in Testing keep their 7-day expiry; tokens issued after publishing do not expire on a timer.
+
+After this, a refresh token only stops working if you revoke access, change your Google password (for some account types), leave it unused for 6 months, or exceed Google's per-account token limit. Reconnecting the same Google account now updates the existing connection in place, keeping its calendar selections. If a token is ever revoked, the display status reads **Reconnect Google Calendar** instead of a generic sync error.
 
 The implementation uses Google's supported OAuth authorization-code flow and Calendar REST endpoints. It requests `singleEvents=true` and `showDeleted=true`; this expands recurring events and makes cancelled recurring instances available to the sync code. All-day Google events use their date/end-date semantics, while timed events are normalized to `America/Regina` for display. The cache is retained when a sync fails.
 

@@ -92,7 +92,8 @@
     if (!app.state) return;
     const { settings, calendar } = app.state;
     dom.controlModeLabel.textContent = app.state.mode === "demo" ? "DISPLAY CONTROLS · DEMO" : "DISPLAY CONTROLS";
-    dom.controlPeriod.textContent = `${settings.view === "month" ? "Month" : "Week"} · ${periodText(app.state)}`;
+    const returnTime = settings.manual_until ? new Intl.DateTimeFormat(undefined, { timeZone: app.state.timezone, hour: "numeric", minute: "2-digit" }).format(new Date(settings.manual_until)) : "";
+    dom.controlPeriod.textContent = `${settings.view === "month" ? "Month" : "Week"} · ${periodText(app.state)}${returnTime ? ` · returns to today at ${returnTime}` : " · follows today"}`;
     document.querySelectorAll("[data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === settings.view));
     dom.weekStart.value = settings.week_start;
     dom.slideshowSeconds.value = settings.slideshow_seconds;

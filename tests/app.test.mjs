@@ -32,6 +32,19 @@ test("month ranges cover complete six-week display grids", () => {
   assert.equal(Date.parse(`${info.end}T00:00:00Z`) - Date.parse(`${info.start}T00:00:00Z`), 42 * 86400000);
 });
 
+test("period containment drives whether the display follows today", () => {
+  const settings = { view: "week", anchor_date: "2026-09-09", week_start: "monday" };
+  assert.equal(app.periodContains(settings, "2026-09-13"), true);
+  assert.equal(app.periodContains(settings, "2026-09-14"), false);
+  assert.equal(app.periodContains({ ...settings, view: "month" }, "2026-10-11"), true);
+});
+
+test("a fresh install follows today instead of a fixed date", () => {
+  const settings = app.readSettings();
+  assert.equal(settings.follow_today, true);
+  assert.equal(settings.manual_until, "");
+});
+
 test("demo events are explicit sample data with timed and all-day cases", () => {
   const events = app.makeDemoEvents("2026-09-07", "2026-09-14");
   assert.ok(events.length >= 8);
@@ -95,7 +108,15 @@ test("management state is protected and phone view changes are persisted", async
   const seeded = await fetch(`${baseUrl}/api/state`, { method: "POST", headers: { "Content-Type": "application/json", Cookie: cookie }, body: JSON.stringify({ view: "month", anchor_date: "2026-03-31" }) });
   assert.equal(seeded.status, 200);
   const previousMonth = await fetch(`${baseUrl}/api/state`, { method: "POST", headers: { "Content-Type": "application/json", Cookie: cookie }, body: JSON.stringify({ action: "navigate", direction: "previous" }) });
-  assert.equal((await previousMonth.json()).state.settings.anchor_date, "2026-02-28");
+  const previousPayload = (await previousMonth.json()).state.settings;
+  assert.equal(previousPayload.anchor_date, "2026-02-28");
+  assert.equal(previousPayload.follow_today, false);
+  assert.ok(Date.parse(previousPayload.manual_until) > Date.now());
+
+  const today = await fetch(`${baseUrl}/api/state`, { method: "POST", headers: { "Content-Type": "application/json", Cookie: cookie }, body: JSON.stringify({ action: "today" }) });
+  const todayPayload = (await today.json()).state;
+  assert.equal(todayPayload.settings.follow_today, true);
+  assert.equal(todayPayload.settings.anchor_date, todayPayload.today);
 });
 
 test("event API returns the requested range and no live account claim in demo mode", async () => {
