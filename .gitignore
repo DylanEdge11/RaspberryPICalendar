@@ -1,4 +1,5 @@
 node_modules/
+.codex-remote-attachments/
 .env
 .env.*
 !.env.example
@@ -10,3 +11,5 @@ data/*
 *.sqlite-wal
 *.log
 coverage/
+__pycache__/
+*.pyc

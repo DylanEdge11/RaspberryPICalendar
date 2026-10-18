@@ -6,6 +6,11 @@ import { fileURLToPath } from "node:url";
 import { URL, URLSearchParams } from "node:url";
 import { createHash, createSign, randomBytes, timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import { createPhotosPicker } from "./photos-picker.mjs";
+import { createUpdateControl } from "./phone-updates.mjs";
+
+import { createWeatherService } from "./weather.mjs";
+const weather = createWeatherService();
 
 const ROOT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const STATIC_DIR = path.join(ROOT_DIR, "static");
@@ -43,12 +48,17 @@ const SECURITY_HEADERS = {
 };
 
 const DEFAULT_SETTINGS = {
+  weather_city: "Regina",
+  weather_duration: "hourly",
   view: "week",
   anchor_date: todayKey(),
   follow_today: "true",
   manual_until: "",
   week_start: "monday",
+  weekly_start_hour: "6",
+  weekly_end_hour: "22",
   slideshow_seconds: "12",
+  show_photo_captions: "false",
   overnight_enabled: "true",
   overnight_start: "22:30",
   overnight_end: "06:30",
@@ -93,6 +103,8 @@ let sharp = null;
 try {
   const sharpModule = await import("sharp");
   sharp = sharpModule.default;
+  sharp.concurrency(1);
+  sharp.cache({ memory: 32, files: 0, items: 20 });
 } catch {
   // Photo uploads explain the missing optional runtime dependency to the caller.
 }
@@ -102,7 +114,33 @@ const oauthStates = new Map();
 const loginAttempts = new Map();
 const updateClients = new Set();
 let syncInProgress = false;
+let accountMutationInProgress = false;
+let calendarRevision = 0;
 let uploadQueue = Promise.resolve();
+let pendingUploads = 0;
+const INSTANCE_ID = randomBytes(12).toString('hex');
+const phoneUpdates = createUpdateControl({ dataDir: DATA_DIR, mode: APP_MODE });
+let photosConnecting = false;
+const PHOTOS_SCOPE = "https://www.googleapis.com/auth/photospicker.mediaitems.readonly";
+const pickerAccount = { token_path: path.join("secrets", "google-photos-picker.json") };
+const picker = createPhotosPicker({
+  connected: () => fs.existsSync(safeDataPath(pickerAccount.token_path)),
+  accessToken: async () => {
+    try { return await getAccessToken(pickerAccount); }
+    catch { throw httpError(401, "Google Photos access expired. Reconnect Google Photos on the Pi."); }
+  },
+  api: async (url, options) => {
+    try { return await googleJsonForAccount(pickerAccount, url, options); }
+    catch (error) {
+      if ([404, 410].includes(error.statusCode)) throw httpError(410, "Google Photos selection expired. Start a new selection.");
+      if (error.statusCode === 403) throw httpError(403, "Enable Google Photos Picker API in Google Cloud and connect Google Photos again if permission expired.");
+      throw httpError(502, "Google Photos could not be reached or its connection expired. Retry, or reconnect Google Photos on the Pi.");
+    }
+  },
+  withSlot: withUploadSlot,
+  hasPhoto: (id) => Boolean(db.prepare("SELECT id FROM photos WHERE id=?").get(id)),
+  savePhoto: (data, filename, id) => processPhotoPart({ data, filename }, id)
+});
 
 function clampInteger(value, min, max) {
   const number = Number.parseInt(value, 10);
@@ -259,12 +297,17 @@ function readSettings() {
   const manualUntil = Date.parse(values.manual_until || "");
   const followToday = values.follow_today !== "false" || !Number.isFinite(manualUntil) || manualUntil <= Date.now();
   return {
+    weather_city: values.weather_city || "Regina",
+    weather_duration: values.weather_duration === "weekly" ? "weekly" : "hourly",
     view: values.view === "month" ? "month" : "week",
     anchor_date: !followToday && isDateKey(values.anchor_date) ? values.anchor_date : todayKey(),
     follow_today: followToday,
     manual_until: followToday ? "" : new Date(manualUntil).toISOString(),
     week_start: values.week_start === "sunday" ? "sunday" : "monday",
+    weekly_start_hour: clampInteger(values.weekly_start_hour ?? 6, 0, 23),
+    weekly_end_hour: clampInteger(values.weekly_end_hour ?? 22, 1, 24),
     slideshow_seconds: clampInteger(values.slideshow_seconds || 12, 5, 60),
+    show_photo_captions: values.show_photo_captions === "true",
     overnight_enabled: values.overnight_enabled !== "false",
     overnight_start: isTimeKey(values.overnight_start) ? values.overnight_start : "22:30",
     overnight_end: isTimeKey(values.overnight_end) ? values.overnight_end : "06:30",
@@ -275,6 +318,23 @@ function readSettings() {
 function updateSettings(patch) {
   const current = readSettings();
   const next = { ...current };
+  if (patch.weather_city !== undefined) {
+    if (typeof patch.weather_city !== "string" || !patch.weather_city.trim() || patch.weather_city.length > 120) throw httpError(400, "Weather location must be 1–120 characters");
+    next.weather_city = patch.weather_city.trim();
+  }
+  if (patch.weather_duration !== undefined) {
+    if (!["hourly", "weekly"].includes(patch.weather_duration)) throw httpError(400, "Weather duration must be hourly or weekly");
+    next.weather_duration = patch.weather_duration;
+  }
+  for (const [key, min, max] of [['weekly_start_hour', 0, 23], ['weekly_end_hour', 1, 24]]) {
+    if (patch[key] !== undefined) {
+      if (typeof patch[key] !== 'number' || !Number.isInteger(patch[key]) || patch[key] < min || patch[key] > max) {
+        throw httpError(400, `${key} must be a whole hour between ${min} and ${max}`);
+      }
+      next[key] = patch[key];
+    }
+  }
+  if (next.weekly_end_hour <= next.weekly_start_hour) throw httpError(400, 'Weekly end time must be later than start time. Choose midnight (end of day) for late events.');
   if (patch.view !== undefined) {
     if (!['week', 'month'].includes(patch.view)) throw httpError(400, "view must be week or month");
     next.view = patch.view;
@@ -298,6 +358,10 @@ function updateSettings(patch) {
     next.slideshow_seconds = seconds;
   }
   if (patch.overnight_enabled !== undefined) next.overnight_enabled = Boolean(patch.overnight_enabled);
+  if (patch.show_photo_captions !== undefined) {
+    if (typeof patch.show_photo_captions !== "boolean") throw httpError(400, "show_photo_captions must be true or false");
+    next.show_photo_captions = patch.show_photo_captions;
+  }
   if (patch.overnight_start !== undefined) {
     if (!isTimeKey(patch.overnight_start)) throw httpError(400, "overnight_start must be HH:MM");
     next.overnight_start = patch.overnight_start;
@@ -441,9 +505,10 @@ function getStatePayload() {
     today: todayKey(),
     settings,
     period: getPeriodInfo(settings),
-    calendar: getSyncStatus(),
+    calendar: { ...getSyncStatus(), revision: calendarRevision },
     photo_count: getPhotos().length,
-    server_time: new Date().toISOString()
+    server_time: new Date().toISOString(),
+    instance_id: INSTANCE_ID
   };
 }
 
@@ -533,7 +598,10 @@ function clearLoginFailures(req) {
 }
 
 function setSessionCookie(res, token, maxAge = Math.floor(SESSION_TTL_MS / 1000)) {
-  res.setHeader("Set-Cookie", `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}`);
+  // OAuth returns to this browser through a top-level GET from Google. Lax
+  // keeps the session cookie for that callback while still withholding it
+  // from cross-site POST requests.
+  res.setHeader("Set-Cookie", `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`);
 }
 
 function broadcastState() {
@@ -624,6 +692,7 @@ function cleanFileName(name) {
 }
 
 async function withUploadSlot(task) {
+  pendingUploads += 1;
   const previous = uploadQueue;
   let release;
   uploadQueue = new Promise((resolve) => { release = resolve; });
@@ -631,6 +700,7 @@ async function withUploadSlot(task) {
   try {
     return await task();
   } finally {
+    pendingUploads -= 1;
     release();
   }
 }
@@ -646,6 +716,12 @@ async function processPhotoRequest(req) {
   const body = await readRequestBody(req, MAX_UPLOAD_BYTES);
   const part = parseMultipart(body, req.headers["content-type"] || "").find((candidate) => candidate.filename && candidate.data.length);
   if (!part) throw httpError(400, "Choose an image file to upload");
+  return processPhotoPart(part);
+}
+
+async function processPhotoPart(part, photoId = null) {
+  if (!sharp) throw httpError(503, "Photo processing is unavailable. Install the application dependencies first.");
+  if (part.data.length > MAX_UPLOAD_BYTES) throw httpError(413, "Photo exceeds the 20 MB limit");
   const sniffedMime = sniffImage(part.data);
   if (!sniffedMime) throw httpError(415, "Unsupported image format. Use JPEG, PNG, GIF, WebP, or a HEIC file supported by this Pi build.");
   const sha256 = createHash("sha256").update(part.data).digest("hex");
@@ -654,7 +730,7 @@ async function processPhotoRequest(req) {
   if (Number(totals.count) >= MAX_PHOTOS) throw httpError(507, `The family display is limited to ${MAX_PHOTOS} photos`);
   if (Number(totals.bytes) + part.data.length > MAX_PHOTO_STORAGE_BYTES) throw httpError(507, "The family photo storage limit has been reached; remove an older photo first");
 
-  const id = `photo_${Date.now().toString(36)}_${randomBytes(5).toString("hex")}`;
+  const id = photoId || `photo_${Date.now().toString(36)}_${randomBytes(5).toString("hex")}`;
   const originalExtension = extensionForMime(sniffedMime, part.filename);
   const originalRelative = path.join("photos", "original", `${id}.${originalExtension}`);
   const displayRelative = path.join("photos", "display", `${id}.jpg`);
@@ -748,18 +824,20 @@ function getCachedEvents(start, end) {
   const rangeStartMs = Date.parse(googleBoundary(start));
   const rangeEndMs = Date.parse(googleBoundary(end));
   const rows = db.prepare(`
-    SELECT e.*, s.summary AS calendar_summary, s.color AS source_color
+    SELECT e.*, s.id AS source_id, s.summary AS calendar_summary, s.color AS source_color,
+      custom.value AS custom_color
     FROM calendar_events e
     LEFT JOIN calendar_sources s ON s.account_id = e.account_id AND s.calendar_id = e.calendar_id
-    WHERE (e.all_day = 1 AND e.start_date < ? AND e.end_date > ?)
-       OR (e.all_day = 0 AND e.end_ms > ? AND e.start_ms < ?)
+    LEFT JOIN settings custom ON custom.key = 'calendar_color:' || s.id
+    WHERE s.enabled = 1 AND ((e.all_day = 1 AND e.start_date < ? AND e.end_date > ?)
+       OR (e.all_day = 0 AND e.end_ms > ? AND e.start_ms < ?))
     ORDER BY e.start_date, e.start_local, e.title
   `).all(end, start, rangeStartMs, rangeEndMs);
   return rows.map((row) => ({
     id: `${row.account_id}:${row.calendar_id}:${row.event_id}`,
     title: row.title,
     calendar: row.calendar_summary || row.calendar_id,
-    calendar_color: row.color || row.source_color || "#6d7bea",
+    calendar_color: row.custom_color || row.source_color || row.color || "#6d7bea",
     start_date: row.start_date,
     end_date: row.end_date,
     start_time: row.all_day ? null : row.start_local?.slice(11, 16),
@@ -782,7 +860,11 @@ function validRange(url) {
 
 function getAccountsAndSources() {
   const accounts = db.prepare("SELECT id, label, email, created_at, last_error FROM google_accounts ORDER BY created_at").all();
-  const sources = db.prepare(`SELECT id, account_id, calendar_id, summary, description, color, enabled, updated_at FROM calendar_sources ORDER BY summary`).all().map((source) => ({ ...source, enabled: Boolean(source.enabled) }));
+  const sources = db.prepare(`SELECT s.id, s.account_id, s.calendar_id, s.summary, s.description,
+    COALESCE(custom.value, s.color) AS color, s.enabled, s.updated_at,
+    custom.value AS custom_color FROM calendar_sources s
+    LEFT JOIN settings custom ON custom.key = 'calendar_color:' || s.id
+    ORDER BY s.summary`).all().map((source) => ({ ...source, enabled: Boolean(source.enabled) }));
   return { accounts, sources };
 }
 
@@ -811,7 +893,7 @@ function redirectUri(req) {
   throw httpError(503, "Set GOOGLE_REDIRECT_URI. Use an exact HTTPS callback on an owned host, or start the OAuth flow from the Pi itself with http://localhost.");
 }
 
-function googleAuthorizeUrl(req, state) {
+function googleAuthorizeUrl(req, state, scope = CALENDAR_SCOPE) {
   const client = readClientSecrets();
   const params = new URLSearchParams({
     client_id: client.clientId,
@@ -819,7 +901,7 @@ function googleAuthorizeUrl(req, state) {
     response_type: "code",
     access_type: "offline",
     prompt: "consent",
-    scope: CALENDAR_SCOPE,
+    scope,
     state
   });
   return `${client.authUri}?${params}`;
@@ -890,6 +972,48 @@ async function getServiceAccessToken() {
   if (!response.ok || !payload.access_token) throw httpError(502, `Service account sign-in failed${payload.error_description ? `: ${payload.error_description}` : ""}`);
   serviceToken = { accessToken: payload.access_token, expiresAt: Date.now() + Number(payload.expires_in || 3600) * 1000 };
   return serviceToken.accessToken;
+}
+
+async function saveGoogleConnection(token) {
+  // Calendar's primary ID identifies the account without requesting profile scopes.
+  const primaryUrl = "https://www.googleapis.com/calendar/v3/calendars/primary";
+  const primary = await googleJson(primaryUrl, token.access_token);
+  if (!primary.id) throw httpError(502, "Google did not return a primary calendar identity");
+  const accounts = db.prepare("SELECT * FROM google_accounts ORDER BY created_at, id").all();
+  let existing = accounts.find((account) => account.email === primary.id);
+  if (!existing) {
+    for (const account of accounts.filter((row) => !row.email)) {
+      // Older releases did not have permission to retrieve the account email.
+      // Resolve legacy identities rather than guessing from shared calendar access.
+      let identity;
+      try { identity = await googleJsonForAccount(account, primaryUrl); }
+      catch { throw httpError(409, "An older connection could not be identified. Disconnect that old connection before reconnecting."); }
+      if (identity.id === primary.id) { existing = account; break; }
+    }
+  }
+  const id = existing?.id || `acct_${randomBytes(8).toString("hex")}`;
+  const tokenRelative = existing?.token_path || path.join("secrets", `${id}.json`);
+  const savedToken = existing ? { ...readToken(existing), ...token } : token;
+  writePrivateJson(safeDataPath(tokenRelative), savedToken);
+  db.prepare(`INSERT INTO google_accounts(id, label, email, token_path, created_at)
+    VALUES(?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
+    label=excluded.label, email=excluded.email, last_error=NULL
+  `).run(id, primary.id, primary.id, tokenRelative, new Date().toISOString());
+  return { id, token_path: tokenRelative };
+}
+
+function disconnectGoogleAccount(id) {
+  if (id === SERVICE_ACCOUNT_ID) throw httpError(400, "Remove GOOGLE_SERVICE_ACCOUNT_KEY from the configuration to disconnect shared calendars");
+  if (syncInProgress || accountMutationInProgress) throw httpError(409, "Calendar sync is running. Wait a moment and try disconnecting again.");
+  const account = db.prepare("SELECT * FROM google_accounts WHERE id = ?").get(id);
+  if (!account) throw httpError(404, "Google connection not found");
+  // Foreign-key cascades remove only this connection's sources and cached events.
+  // Do not revoke Google's grant: duplicate connections may share that grant.
+  fs.rmSync(safeDataPath(account.token_path), { force: true });
+  db.prepare("DELETE FROM settings WHERE key IN (SELECT 'calendar_color:' || id FROM calendar_sources WHERE account_id=?)").run(id);
+  db.prepare("DELETE FROM google_accounts WHERE id = ?").run(id);
+  calendarRevision += 1;
+  broadcastState();
 }
 
 async function getAccessToken(account) {
@@ -1052,7 +1176,7 @@ async function refreshGoogleSources(account) {
 }
 
 async function syncCalendars() {
-  if (APP_MODE !== "production" || syncInProgress) return { skipped: true };
+  if (APP_MODE !== "production" || syncInProgress || accountMutationInProgress || phoneUpdates.busy()) return { skipped: true };
   syncInProgress = true;
   const attemptedAt = new Date().toISOString();
   db.prepare("UPDATE sync_status SET last_attempt_at = ?, error = NULL WHERE id = 1").run(attemptedAt);
@@ -1118,13 +1242,32 @@ async function handleRequest(req, res) {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
   const method = req.method || "GET";
 
+  if (url.pathname === '/api/system/update') {
+    requireAdmin(req);
+    if (method === 'GET') return sendJson(res, 200, phoneUpdates.status());
+    if (method === 'POST') {
+      if (pendingUploads || picker.status().busy || ['selecting', 'ready', 'importing'].includes(picker.status().job?.phase) || photosConnecting || syncInProgress || accountMutationInProgress) {
+        throw httpError(409, 'Wait for photo imports, uploads, or calendar syncing to finish before updating.');
+      }
+      return sendJson(res, 202, phoneUpdates.request());
+    }
+  }
+  if ((method === 'POST' || method === 'DELETE' || url.pathname === '/api/google/start' || url.pathname === '/api/google/callback' || url.pathname === '/api/google-photos/connect')
+      && url.pathname !== '/api/auth/login' && phoneUpdates.busy()) {
+    throw httpError(503, 'Application update in progress. Try again when the Pi reconnects.');
+  }
+
   if (method === "GET" && url.pathname === "/") return serveStatic(res, "index.html");
   if (method === "GET" && url.pathname === "/control") return serveStatic(res, "control.html");
   if (method === "GET" && url.pathname.startsWith("/static/")) return serveStatic(res, url.pathname.slice("/static/".length));
   if (method === "GET" && url.pathname.startsWith("/media/")) return serveMedia(res, url);
 
   if (method === "GET" && url.pathname === "/api/health") {
-    return sendJson(res, 200, { ok: true, mode: APP_MODE, timezone: TIMEZONE, version: "0.1.0", server_time: new Date().toISOString() });
+    return sendJson(res, 200, { ok: true, mode: APP_MODE, timezone: TIMEZONE, version: "0.1.0", server_time: new Date().toISOString(), instance_id: INSTANCE_ID });
+  }
+  if (method === "GET" && url.pathname === "/api/weather") {
+    try { return sendJson(res, 200, await weather.get(readSettings().weather_city)); }
+    catch (error) { throw httpError(503, error.message); }
   }
   if (method === "GET" && url.pathname === "/api/state") return sendJson(res, 200, getStatePayload());
   if (method === "GET" && url.pathname === "/api/events") {
@@ -1191,6 +1334,38 @@ async function handleRequest(req, res) {
     return sendJson(res, 200, { ok: true });
   }
 
+  if (url.pathname.startsWith("/api/google-photos/")) {
+    const session = requireAdmin(req);
+    const action = url.pathname.slice("/api/google-photos/".length);
+    if (method === "GET" && action === "status") return sendJson(res, 200, { ...picker.status(), demo: APP_MODE === "demo" });
+    if (APP_MODE === "demo") throw httpError(409, "Google Photos import is disabled in demo mode. Phone file uploads still work.");
+    if (photosConnecting) throw httpError(409, "Google Photos connection is being updated. Try again in a moment.");
+    if (method === "GET" && action === "connect") {
+      picker.ensureIdle();
+      const callback = new URL(redirectUri(req));
+      if (req.headers.host !== callback.host) return sendText(res, 400, "For initial Google Photos setup, open the control page on the Pi at the same address as GOOGLE_REDIRECT_URI (normally http://localhost:8080/control), enter your PIN, and connect there. Later imports work from your phone.");
+      const state = randomBytes(24).toString("base64url");
+      const location = googleAuthorizeUrl(req, state, PHOTOS_SCOPE);
+      oauthStates.set(state, { createdAt: Date.now(), sessionToken: session.token, purpose: "photos" });
+      return redirect(res, location);
+    }
+    if (method === "POST" && action === "start") {
+      if (!sharp) throw httpError(503, "Install the application dependencies before importing photos.");
+      return sendJson(res, 200, await picker.start());
+    }
+    if (method === "POST" && action === "check") return sendJson(res, 200, await picker.check());
+    if (method === "POST" && action === "import") return sendJson(res, 202, picker.importSelected());
+    if (method === "POST" && action === "cancel") return sendJson(res, 200, await picker.cancel());
+    if (method === "DELETE" && action === "connection") {
+      photosConnecting = true;
+      try {
+        await picker.cancel();
+        fs.rmSync(safeDataPath(pickerAccount.token_path), { force: true });
+      } finally { photosConnecting = false; }
+      return sendJson(res, 200, picker.status());
+    }
+  }
+
   if (method === "GET" && url.pathname === "/api/google/start") {
     const session = requireAdmin(req);
     const state = randomBytes(24).toString("base64url");
@@ -1205,40 +1380,46 @@ async function handleRequest(req, res) {
     if (!savedState || savedState.createdAt + OAUTH_STATE_TTL_MS < Date.now()) return sendText(res, 400, "This Google pairing link expired. Return to the control page and try again.");
     if (sessionFromRequest(req)?.token !== savedState.sessionToken) return sendText(res, 403, "This Google pairing must be completed in the same paired browser.");
     if (!code) return sendText(res, 400, "Google authorization was not completed. Return to the control page and try again.");
-    const token = await exchangeGoogleCode(req, code);
-    let email = null;
+    if (savedState.purpose === "photos") {
+      picker.ensureIdle();
+      if (photosConnecting) throw httpError(409, "Google Photos connection is already being updated.");
+      photosConnecting = true;
+      try {
+        const token = await exchangeGoogleCode(req, code);
+        if (!token.scope?.split(" ").includes(PHOTOS_SCOPE)) throw httpError(403, "Google Photos permission was not granted. Connect again and allow access to selected photos.");
+        if (!token.refresh_token) throw httpError(403, "Google did not provide ongoing access. Remove this app's Photos access in Google Account settings, then connect again.");
+        await picker.cancel();
+        writePrivateJson(safeDataPath(pickerAccount.token_path), token);
+      } finally { photosConnecting = false; }
+      return redirect(res, "/control?photos=connected");
+    }
+    if (syncInProgress || accountMutationInProgress) throw httpError(409, "Calendar sync is running. Wait a moment, then start Google connection again.");
+    accountMutationInProgress = true;
     try {
-      const user = await googleJson("https://www.googleapis.com/oauth2/v2/userinfo", token.access_token);
-      email = user.email || null;
-    } catch {
-      // The calendar connection remains useful even if optional profile lookup fails.
-    }
-    // Reconnecting an existing account replaces its token and keeps its calendar selections.
-    const existing = email ? db.prepare("SELECT * FROM google_accounts WHERE email = ? ORDER BY created_at LIMIT 1").get(email) : null;
-    const accountId = existing?.id || `acct_${randomBytes(8).toString("hex")}`;
-    const tokenRelative = existing?.token_path || path.join("secrets", `${accountId}.json`);
-    writePrivateJson(safeDataPath(tokenRelative), token);
-    if (existing) {
-      db.prepare("UPDATE google_accounts SET last_error = NULL WHERE id = ?").run(accountId);
-    } else {
-      db.prepare("INSERT INTO google_accounts(id, label, email, token_path, created_at) VALUES(?, ?, ?, ?, ?)").run(accountId, email || "Google account", email, tokenRelative, new Date().toISOString());
-    }
-    await refreshGoogleSources({ id: accountId, token_path: tokenRelative });
-    syncCalendars().catch((error) => log("error", "Calendar sync after reconnect failed", { message: error.message }));
+      const token = await exchangeGoogleCode(req, code);
+      const account = await saveGoogleConnection(token);
+      await refreshGoogleSources(account);
+    } finally { accountMutationInProgress = false; }
     return redirect(res, "/control?google=connected");
+  }
+  if (method === "DELETE" && url.pathname.startsWith("/api/google/accounts/")) {
+    requireAdmin(req);
+    disconnectGoogleAccount(decodeURIComponent(url.pathname.slice("/api/google/accounts/".length)));
+    return sendJson(res, 200, { ok: true, ...getAccountsAndSources() });
   }
   if (method === "GET" && url.pathname === "/api/google/accounts") {
     requireAdmin(req);
     return sendJson(res, 200, getAccountsAndSources());
   }
-  if (method === "DELETE" && url.pathname.startsWith("/api/google/accounts/")) {
+  if (method === 'POST' && url.pathname === '/api/google/color') {
     requireAdmin(req);
-    const accountId = decodeURIComponent(url.pathname.slice("/api/google/accounts/".length));
-    if (accountId === SERVICE_ACCOUNT_ID) throw httpError(400, "Remove GOOGLE_SERVICE_ACCOUNT_KEY from the configuration to disconnect shared calendars");
-    const account = db.prepare("SELECT * FROM google_accounts WHERE id = ?").get(accountId);
-    if (!account) throw httpError(404, "That Google account is not connected");
-    db.prepare("DELETE FROM google_accounts WHERE id = ?").run(accountId);
-    try { fs.rmSync(safeDataPath(account.token_path), { force: true }); } catch { /* The account row is already gone. */ }
+    const body = await readJson(req);
+    if (typeof body.id !== 'string' || !db.prepare('SELECT id FROM calendar_sources WHERE id=?').get(body.id)) throw httpError(404, 'Calendar not found');
+    if (body.color !== null && (typeof body.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(body.color))) throw httpError(400, 'Choose a valid calendar colour');
+    const key = `calendar_color:${body.id}`;
+    if (body.color === null) db.prepare('DELETE FROM settings WHERE key=?').run(key);
+    else setSetting(key, body.color.toLowerCase());
+    calendarRevision += 1;
     broadcastState();
     return sendJson(res, 200, { ok: true, ...getAccountsAndSources() });
   }
@@ -1251,6 +1432,8 @@ async function handleRequest(req, res) {
       if (typeof source.id !== "string") continue;
       update.run(source.enabled ? 1 : 0, source.id);
     }
+    calendarRevision += 1;
+    broadcastState();
     await syncCalendars();
     broadcastState();
     return sendJson(res, 200, { ok: true, ...getAccountsAndSources() });
@@ -1327,6 +1510,9 @@ if (shouldStartServer && APP_MODE === "production" && !adminPinIsConfigured()) {
 }
 
 export {
+  saveGoogleConnection,
+  disconnectGoogleAccount,
+  getCachedEvents,
   addDays,
   addMonths,
   dayOfWeek,

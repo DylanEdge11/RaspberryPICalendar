@@ -62,8 +62,13 @@
           <section class="surface-card control-card settings-card">
             <div class="card-heading-row"><div><p class="section-kicker">DISPLAY SETTINGS</p><h2>Make it yours.</h2></div><span class="card-number">02</span></div>
             <form id="settingsForm">
+<label class="setting-row"><span><strong>Weather location</strong><small>City, province or country · Celsius</small></span><input id="weatherCity" type="text" maxlength="120" required placeholder="Regina"></label>
+<label class="setting-row"><span><strong>Weather forecast</strong><small>Opens when you tap the weather widget</small></span><select id="weatherDuration"><option value="hourly">Hourly today</option><option value="weekly">Next 7 days</option></select></label>
+              <div class="quiet-time-grid weekly-time-grid"><label class="field-label">Weekly start time<select class="select-input" id="weeklyStartHour"></select></label><label class="field-label">Weekly end time<select class="select-input" id="weeklyEndHour"></select></label></div>
+              <p class="muted-copy">Weekly view only. End time must be later than start time. Choose midnight (end of day) to include 11 PM events.</p>
               <label class="setting-row"><span><strong>Week starts on</strong><small>Used by week and month views</small></span><select class="select-input" id="weekStart"><option value="monday">Monday</option><option value="sunday">Sunday</option></select></label>
               <label class="setting-row"><span><strong>Photo timing</strong><small>Seconds per family photo</small></span><span class="inline-control"><input class="number-input" id="slideshowSeconds" type="number" min="5" max="60" step="1"><span>sec</span></span></label>
+              <label class="setting-row"><span><strong>Show photo labels</strong><small>Filename and photo counter over the image; demo labels always remain visible</small></span><input id="showPhotoCaptions" type="checkbox"></label>
               <label class="setting-row"><span><strong>Display title</strong><small>Short phrase at the top of the screen</small></span><input class="text-input compact-input" id="displayTitleInput" type="text" maxlength="80"></label>
               <div class="setting-row overnight-row"><span><strong>Quiet hours</strong><small>Dims the page; it does not power off the monitor</small></span><label class="toggle"><input id="overnightEnabled" type="checkbox"><span class="toggle-track"></span></label></div>
               <div class="quiet-time-grid"><label class="field-label">Dim at<input class="text-input" id="overnightStart" type="time"></label><label class="field-label">Brighten at<input class="text-input" id="overnightEnd" type="time"></label></div>
@@ -82,6 +87,21 @@
               <p class="save-message" id="uploadMessage" role="status"></p>
             </form>
             <div class="photo-list" id="photoList"></div>
+            <div class="photos-picker" id="photosPicker">
+              <h3>Import from Google Photos</h3>
+              <p class="muted-copy">Search for your album by name, select up to 100 photos, then import them here. Display-sized copies stay on this Pi until you remove them. New album additions are not imported automatically. Videos are skipped.</p>
+              <p class="muted-copy">Anyone paired with this household display can start an import. In Google Photos, sign in with the same account connected below. Only your selected photos are downloaded; Google passwords and tokens are never sent to this page.</p>
+              <p class="form-note">First-time setup: enable Google Photos Picker API in Google Cloud, then open http://localhost:8080/control in Chromium on the Pi and connect below. After setup, use these controls from your phone.</p>
+              <div class="picker-actions">
+                <a class="secondary-button" id="photosConnect" href="/api/google-photos/connect">Connect Google Photos</a>
+                <button class="secondary-button hidden" id="photosStart" type="button">Choose from Google Photos</button>
+                <a class="primary-button hidden" id="photosOpen" target="_blank" rel="noopener noreferrer">Open Google Photos selection</a>
+                <button class="primary-button hidden" id="photosImport" type="button">Import selected photos</button>
+                <button class="secondary-button hidden" id="photosCancel" type="button">Cancel selection</button>
+                <button class="text-button hidden" id="photosDisconnect" type="button">Disconnect Google Photos</button>
+              </div>
+              <p id="photosStatus" class="save-message" role="status" aria-live="polite"></p>
+            </div>
           </section>
 
           <section class="surface-card control-card google-card">
@@ -90,6 +110,12 @@
             <div id="googleAccountList" class="google-account-list"><p class="muted-copy">Loading calendar connections…</p></div>
             <div class="google-actions"><a class="secondary-button" id="googleConnectButton" href="/api/google/start">Connect Google Calendar</a><button class="text-button" id="googleSyncButton" type="button">Sync now</button></div>
             <p class="form-note">Google credentials stay in the Pi’s private data directory. Demo mode never contacts Google.</p>
+          </section>
+          <section class="surface-card control-card">
+            <div class="card-heading-row"><div><p class="section-kicker">APPLICATION</p><h2>Keep your display updated.</h2></div></div>
+            <p class="muted-copy">Install the latest published version from GitHub. The Pi backs up household data first. The display will disconnect while the update installs; leave the Pi powered on.</p>
+            <button class="secondary-button" id="applicationUpdate" type="button" disabled>Update application</button>
+            <p class="save-message" id="applicationUpdateStatus" role="status">Checking updater setup…</p>
           </section>
         </div>
       </section>

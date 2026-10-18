@@ -18,7 +18,10 @@
     todayButton: document.getElementById("todayButton"),
     nextButton: document.getElementById("nextButton"),
     weekStart: document.getElementById("weekStart"),
+    weeklyStartHour: document.getElementById("weeklyStartHour"),
+    weeklyEndHour: document.getElementById("weeklyEndHour"),
     slideshowSeconds: document.getElementById("slideshowSeconds"),
+    showPhotoCaptions: document.getElementById("showPhotoCaptions"),
     displayTitleInput: document.getElementById("displayTitleInput"),
     overnightEnabled: document.getElementById("overnightEnabled"),
     overnightStart: document.getElementById("overnightStart"),
@@ -35,6 +38,110 @@
   };
 
   const app = { state: null, photos: [], google: { accounts: [], sources: [] } };
+  const hourLabel = (hour) => hour === 24 ? 'Midnight (end of day)' : `${hour % 12 || 12} ${hour >= 12 ? 'PM' : 'AM'}`;
+  dom.weeklyStartHour.innerHTML = Array.from({ length: 24 }, (_, h) => `<option value="${h}">${hourLabel(h)}</option>`).join('');
+  dom.weeklyEndHour.innerHTML = Array.from({ length: 24 }, (_, i) => `<option value="${i + 1}">${hourLabel(i + 1)}</option>`).join('');
+  const photosUi = Object.fromEntries(["Connect", "Start", "Open", "Import", "Cancel", "Disconnect", "Status"].map((name) => [name, document.getElementById(`photos${name}`)]));
+  let photosTimer;
+  let photosProgress = "";
+  const updateButton = document.getElementById('applicationUpdate');
+  const updateMessage = document.getElementById('applicationUpdateStatus');
+  let updateTimer;
+  let updateStartedAt = 0;
+
+  async function refreshUpdater() {
+    clearTimeout(updateTimer);
+    try {
+      if (updateStartedAt) {
+        const health = await requestJson('/api/health');
+        if (health.instance_id !== app.state?.instance_id) { window.location.reload(); return; }
+      }
+      const result = await requestJson('/api/system/update');
+      const busy = ['queued', 'running'].includes(result.state);
+      updateButton.disabled = !result.enabled || busy;
+      updateMessage.textContent = result.message + (result.reason ? ` ${result.reason}` : '') + (result.revision ? ` Version ${result.revision.slice(0, 7)}.` : '');
+      if (busy) {
+        updateStartedAt ||= Date.now();
+        if (Date.now() - updateStartedAt > 20 * 60 * 1000) {
+          updateMessage.textContent = 'The update is taking longer than expected. Check the Pi updater service before retrying.';
+          return;
+        }
+        updateTimer = setTimeout(refreshUpdater, 3000);
+      } else { updateStartedAt = 0; }
+    } catch (error) {
+      updateButton.disabled = true;
+      if (updateStartedAt && Date.now() - updateStartedAt < 20 * 60 * 1000) {
+        updateMessage.textContent = 'The Pi is updating and temporarily offline. Keep it powered on; this page will reconnect.';
+        updateTimer = setTimeout(refreshUpdater, 3000);
+      } else {
+        updateMessage.textContent = updateStartedAt ? 'The Pi has not reconnected. Check its updater service from the terminal.' : error.message;
+      }
+    }
+  }
+
+  updateButton.addEventListener('click', async () => {
+    if (!window.confirm('Back up household data and install the latest GitHub version? The display may be offline for several minutes.')) return;
+    updateButton.disabled = true;
+    updateMessage.textContent = 'Requesting update…';
+    try {
+      await postJson('/api/system/update', {});
+      updateStartedAt = Date.now();
+      await refreshUpdater();
+    } catch (error) {
+      updateMessage.textContent = error.message;
+      updateButton.disabled = false;
+    }
+  });
+
+  function renderPicker(state) {
+    const job = state.job;
+    const phase = job?.phase;
+    const active = ["selecting", "ready", "importing"].includes(phase);
+    photosUi.Connect.classList.toggle("hidden", state.demo || state.busy || active);
+    photosUi.Connect.textContent = state.connected ? "Reconnect Google Photos" : "Connect Google Photos";
+    photosUi.Start.classList.toggle("hidden", state.demo || !state.connected || active);
+    photosUi.Open.classList.toggle("hidden", phase !== "selecting");
+    if (job?.picker_url) photosUi.Open.href = job.picker_url;
+    else photosUi.Open.removeAttribute("href");
+    photosUi.Import.classList.toggle("hidden", phase !== "ready");
+    photosUi.Cancel.classList.toggle("hidden", !job || phase === "importing");
+    photosUi.Cancel.textContent = active ? "Cancel selection" : "Clear import status";
+    photosUi.Disconnect.classList.toggle("hidden", state.demo || !state.connected || active);
+    for (const name of ["Start", "Import", "Cancel", "Disconnect"]) photosUi[name].disabled = Boolean(state.busy);
+    let message = state.connected ? "Google Photos connected. You can choose photos from your phone." : "Google Photos is not connected yet.";
+    if (state.demo) message = "Google Photos is unavailable in demo mode. File uploads above still work.";
+    if (phase === "selecting") message = "Open Google Photos, search your album title, select photos and tap Done. Then return here.";
+    if (phase === "ready") message = "Selection ready. Tap Import selected photos to save copies on the Pi.";
+    if (job && !["selecting", "ready"].includes(phase)) message = `${phase === "importing" ? "Importing…" : phase === "complete" ? "Import finished." : "Import stopped."} ${job.imported} added, ${job.skipped} duplicates/videos skipped, ${job.failed} failed.`;
+    photosUi.Status.textContent = [message, ...(job?.messages || [])].join("\n");
+    const progress = `${job?.imported || 0}:${phase || ""}`;
+    if (progress !== photosProgress && job?.imported) loadPhotos().catch(() => {});
+    photosProgress = progress;
+    clearTimeout(photosTimer);
+    if ((active || state.busy) && !dom.controlsView.classList.contains("hidden")) photosTimer = setTimeout(() => pickerRequest(phase === "selecting" ? "check" : "status"), Math.max(2000, job?.poll_after_ms || 3000));
+  }
+
+  async function pickerRequest(action = "status") {
+    clearTimeout(photosTimer);
+    try {
+      const result = action === "status" ? await requestJson("/api/google-photos/status")
+        : action === "disconnect" ? await requestJson("/api/google-photos/connection", { method: "DELETE" })
+        : await postJson(`/api/google-photos/${action}`, {});
+      renderPicker(result);
+    } catch (error) {
+      photosUi.Status.textContent = error.message;
+      if (!dom.controlsView.classList.contains("hidden")) photosTimer = setTimeout(() => pickerRequest("status"), 30000);
+    }
+  }
+
+  for (const [name, action] of [["Start", "start"], ["Import", "import"], ["Cancel", "cancel"], ["Disconnect", "disconnect"]]) {
+    photosUi[name].addEventListener("click", async () => {
+      if (action === "disconnect" && !window.confirm("Disconnect Google Photos? Imported photos stay on the Pi. You can remove them using the photo list.")) return;
+      photosUi[name].disabled = true;
+      await pickerRequest(action);
+      photosUi[name].disabled = false;
+    });
+  }
 
   function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[character]));
@@ -72,6 +179,8 @@
   }
 
   function showLogin() {
+    clearTimeout(photosTimer);
+    clearTimeout(updateTimer);
     dom.loginView.classList.remove("hidden");
     dom.controlsView.classList.add("hidden");
     dom.logoutButton.classList.add("hidden");
@@ -96,7 +205,12 @@
     dom.controlPeriod.textContent = `${settings.view === "month" ? "Month" : "Week"} · ${periodText(app.state)}${returnTime ? ` · returns to today at ${returnTime}` : " · follows today"}`;
     document.querySelectorAll("[data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === settings.view));
     dom.weekStart.value = settings.week_start;
+    dom.weeklyStartHour.value = settings.weekly_start_hour ?? 6;
+    dom.weeklyEndHour.value = settings.weekly_end_hour ?? 22;
+    document.getElementById("weatherCity").value = settings.weather_city;
+    document.getElementById("weatherDuration").value = settings.weather_duration;
     dom.slideshowSeconds.value = settings.slideshow_seconds;
+    dom.showPhotoCaptions.checked = Boolean(settings.show_photo_captions);
     dom.displayTitleInput.value = settings.display_title;
     dom.overnightEnabled.checked = settings.overnight_enabled;
     dom.overnightStart.value = settings.overnight_start;
@@ -164,30 +278,45 @@
     }
     dom.googleAccountList.innerHTML = app.google.accounts.map((account) => {
       const sources = app.google.sources.filter((source) => source.account_id === account.id);
-      const sourceHtml = sources.length ? `<div class="calendar-source-list">${sources.map((source) => `<label class="calendar-source"><input type="checkbox" data-source-id="${escapeHtml(source.id)}" ${source.enabled ? "checked" : ""}><span class="calendar-source-dot" style="--source-color:${/^#[0-9a-f]{6}$/i.test(source.color || "") ? source.color : "#6d7bea"}"></span><span>${escapeHtml(source.summary)}</span></label>`).join("")}</div>` : `<small>No readable calendars returned yet.</small>`;
-      const isService = account.id === "service-account";
-      const shareHint = isService ? `<small>Share each calendar with this address in Google Calendar, then add its ID to GOOGLE_CALENDAR_IDS.</small>` : "";
-      const removeButton = isService ? "" : `<button class="text-button" type="button" data-remove-account="${escapeHtml(account.id)}">Remove</button>`;
-      return `<div class="google-account"><strong>${escapeHtml(account.label)}${account.email ? ` · ${escapeHtml(account.email)}` : ""}</strong>${removeButton}${shareHint}${account.last_error ? `<small class="form-error">${escapeHtml(account.last_error)}</small>` : ""}${sourceHtml}</div>`;
+      const sourceHtml = sources.length ? `<div class="calendar-source-list">${sources.map((source) => `<div class="calendar-colour-row"><label class="calendar-source"><input type="checkbox" data-source-id="${escapeHtml(source.id)}" ${source.enabled ? "checked" : ""}><span>${escapeHtml(source.summary)}</span></label><div class="calendar-colour-actions"><label>Colour <input type="color" data-colour-id="${escapeHtml(source.id)}" aria-label="Colour for ${escapeHtml(source.summary)}" value="${/^#[0-9a-f]{6}$/i.test(source.color || '') ? source.color : '#6d7bea'}"></label><button type="button" class="secondary-button" data-reset-colour="${escapeHtml(source.id)}" ${source.custom_color ? '' : 'disabled'}>Use Google colour</button></div></div>`).join("")}</div><p class="muted-copy">Colours save automatically on this display only; your Google calendars are unchanged.</p><p class="save-message" data-colour-message role="status"></p>` : `<small>No readable calendars returned yet.</small>`;
+      if (account.id === "service-account") {
+        // Shared calendars come from the Pi's configuration, so they are not disconnected here.
+        return `<div class="google-account"><strong>${escapeHtml(account.label)}${account.email ? ` · ${escapeHtml(account.email)}` : ""}</strong><small>Share each calendar with this address in Google Calendar, then add its ID to GOOGLE_CALENDAR_IDS.</small>${account.last_error ? `<small class="form-error">${escapeHtml(account.last_error)}</small>` : ""}${sourceHtml}</div>`;
+      }
+      return `<div class="google-account"><strong>${escapeHtml(account.label)}</strong><small>Connected ${escapeHtml(new Date(account.created_at).toLocaleString())}</small>${account.last_error ? `<small class="form-error">${escapeHtml(account.last_error)}</small>` : ""}${sourceHtml}<button type="button" class="secondary-button" data-disconnect-id="${escapeHtml(account.id)}">Disconnect account</button></div>`;
     }).join("");
     dom.googleAccountList.querySelectorAll("[data-source-id]").forEach((input) => input.addEventListener("change", saveGoogleSources));
-    dom.googleAccountList.querySelectorAll("[data-remove-account]").forEach((button) => button.addEventListener("click", () => removeGoogleAccount(button.dataset.removeAccount)));
+    dom.googleAccountList.querySelectorAll('[data-colour-id]').forEach((input) => input.addEventListener('change', () => saveCalendarColour(input.dataset.colourId, input.value)));
+    dom.googleAccountList.querySelectorAll('[data-reset-colour]').forEach((button) => button.addEventListener('click', () => saveCalendarColour(button.dataset.resetColour, null)));
+    dom.googleAccountList.querySelectorAll("[data-disconnect-id]").forEach((button) => button.addEventListener("click", async () => {
+      if (!window.confirm("Remove this connection and its events from this display? Your Google calendars will not be deleted. Other connections remain connected.")) return;
+      button.disabled = true;
+      try {
+        await requestJson(`/api/google/accounts/${encodeURIComponent(button.dataset.disconnectId)}`, { method: "DELETE" });
+        await loadGoogle();
+        await loadState();
+      } catch (error) {
+        setMessage(dom.settingsMessage, error.message, true);
+        button.disabled = false;
+      }
+    }));
   }
 
-  async function removeGoogleAccount(id) {
-    const account = app.google.accounts.find((item) => item.id === id);
-    if (!account || !window.confirm(`Remove ${account.email || account.label} and its calendars from this display?`)) return;
+  async function saveCalendarColour(id, color) {
+    dom.googleAccountList.querySelectorAll('input, button').forEach((input) => { input.disabled = true; });
     try {
-      await requestJson(`/api/google/accounts/${encodeURIComponent(id)}`, { method: "DELETE" });
-      await loadState();
-      await loadGoogle();
+      app.google = await postJson('/api/google/color', { id, color });
+      renderGoogle();
+      dom.googleAccountList.querySelectorAll('[data-colour-message]').forEach((element) => { element.textContent = 'Colour saved on the Pi.'; });
     } catch (error) {
-      setMessage(dom.settingsMessage, error.message, true);
+      renderGoogle();
+      dom.googleAccountList.querySelectorAll('[data-colour-message]').forEach((element) => { element.textContent = error.message; });
     }
   }
 
   async function saveGoogleSources() {
     const sources = [...dom.googleAccountList.querySelectorAll("[data-source-id]")].map((input) => ({ id: input.dataset.sourceId, enabled: input.checked }));
+    dom.googleAccountList.querySelectorAll("input, button").forEach((input) => { input.disabled = true; });
     try {
       dom.googleSyncButton.disabled = true;
       await postJson("/api/google/sources", { sources });
@@ -197,6 +326,7 @@
       setMessage(dom.settingsMessage, error.message, true);
     } finally {
       dom.googleSyncButton.disabled = false;
+      dom.googleAccountList.querySelectorAll("input, button").forEach((input) => { input.disabled = false; });
     }
   }
 
@@ -210,6 +340,8 @@
       await loadState();
       await loadPhotos();
       await loadGoogle();
+      await pickerRequest();
+      await refreshUpdater();
     } catch (error) {
       dom.loginError.textContent = error.message;
     }
@@ -239,7 +371,12 @@
     try {
       app.state = (await postJson("/api/state", {
         week_start: dom.weekStart.value,
+        weekly_start_hour: Number(dom.weeklyStartHour.value),
+        weekly_end_hour: Number(dom.weeklyEndHour.value),
+        weather_city: document.getElementById("weatherCity").value.trim(),
+        weather_duration: document.getElementById("weatherDuration").value,
         slideshow_seconds: Number(dom.slideshowSeconds.value),
+        show_photo_captions: dom.showPhotoCaptions.checked,
         display_title: dom.displayTitleInput.value,
         overnight_enabled: dom.overnightEnabled.checked,
         overnight_start: dom.overnightStart.value,
@@ -297,6 +434,8 @@
       renderState();
       await loadPhotos();
       await loadGoogle();
+      await pickerRequest();
+      await refreshUpdater();
     } catch (error) {
       dom.loginError.textContent = error.message;
       showLogin();

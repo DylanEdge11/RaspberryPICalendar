@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="/static/styles.css">
   </head>
   <body class="display-page">
-    <main class="display-app" aria-live="polite">
+    <main class="display-app">
       <header class="display-topbar">
         <div class="brand-lockup">
           <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
@@ -20,7 +20,7 @@
         <div class="topbar-status">
           <span class="status-pill" id="syncStatus"><span class="status-dot"></span>Loading calendar</span>
           <span class="clock" id="clock" aria-label="Current time"></span>
-          <a class="icon-link" href="/control" aria-label="Open phone controls" title="Phone controls">⌁</a>
+          <a class="icon-link controls-link" href="/control" target="_blank" rel="noopener" aria-label="Open Controls in a separate tab">Controls</a>
         </div>
       </header>
 
@@ -39,7 +39,8 @@
           </div>
         </section>
 
-        <aside class="photo-card surface-card" aria-label="Family photos">
+        <aside class="album-weather-column" aria-label="Family album and weather">
+        <div class="photo-card surface-card" id="openAlbum" role="button" tabindex="0" aria-haspopup="dialog" aria-label="Open Family Album slideshow">
           <div class="photo-header">
             <div>
               <p class="section-kicker">FAMILY ALBUM</p>
@@ -51,13 +52,14 @@
             <div class="photo-sheen"></div>
             <img id="photoImage" alt="Family photo" decoding="async">
             <div class="photo-empty" id="photoEmpty">Upload a few family photos from the phone controls.</div>
-            <div class="photo-caption">
+            <div class="photo-caption" id="photoCaptionBar">
               <span id="photoCaption">Sample image</span>
               <span class="caption-rule"></span>
               <span id="photoIndex">01</span>
             </div>
           </div>
-          <p class="photo-note" id="photoNote">Photos stay on this Pi and keep cycling if the internet goes away.</p>
+        </div>
+        <button type="button" class="weather-widget surface-card" id="weatherWidget" aria-haspopup="dialog">☁ Weather loading…</button>
         </aside>
       </section>
 
@@ -67,6 +69,17 @@
       </footer>
     </main>
 
-    <script src="/static/display.js?v=0.1.2" defer></script>
+    <dialog id="albumDialog" aria-label="Family Album slideshow">
+      <img id="albumImage" alt="Family photo">
+      <p id="albumEmpty" hidden>No photos yet. Add photos from the phone controls.</p>
+      <span id="albumDemoLabel" hidden>Sample image · demo</span>
+      <div class="album-actions"><button type="button" id="closeAlbum" aria-label="Close slideshow" autofocus>×</button></div>
+    </dialog>
+    <dialog id="eventDialog" aria-labelledby="detailTitle">
+      <div class="detail-heading"><h2 id="detailTitle">Event details</h2><button type="button" class="secondary-button" id="closeDetails" autofocus>Close</button></div>
+      <div id="detailBody"></div>
+    </dialog>
+    <dialog id="weatherDialog" aria-labelledby="weatherTitle"><div class="detail-heading"><h2 id="weatherTitle">Weather</h2><button type="button" class="secondary-button" id="closeWeather" autofocus>Close</button></div><div id="weatherBody"></div><p class="weather-credit">Forecast by <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> · Temperatures in °C</p></dialog>
+    <script src="/static/display.js?v=0.2.0" defer></script>
   </body>
 </html>

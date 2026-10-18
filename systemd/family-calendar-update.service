@@ -1,0 +1,13 @@
+[Unit]
+Description=Back up and update the family calendar from its fixed GitHub repository
+StartLimitIntervalSec=600
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/libexec/family-calendar-update.py
+TimeoutStartSec=15min
+UMask=0077
+Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+StandardOutput=journal
+StandardError=journal
