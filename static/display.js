@@ -469,31 +469,215 @@
     dom.photoCaptionBar.classList.toggle("hidden", !photo?.demo && !app.state?.settings?.show_photo_captions);
   }
 
+  // Photo frame: fills the screen like a smart-display ambient mode. Each "scene"
+  // shows one photo, a pair of portraits, or a three-photo collage chosen from
+  // the photos' shapes, so portrait photos are not stranded in black bars.
   const albumDialog = document.getElementById("albumDialog");
-  const albumImage = document.getElementById("albumImage");
   const albumTrigger = document.getElementById("openAlbum");
-  function renderAlbum() {
+  const frame = {
+    stage: document.getElementById("frameStage"),
+    order: [],
+    cursor: 0,
+    history: [],
+    timer: null,
+    hideTimer: null,
+    sceneCount: 0,
+    aspects: new Map(),
+    token: 0
+  };
+
+  function photoSrc(photo) {
+    return photo.url + (photo.demo ? "" : "?v=" + encodeURIComponent(photo.created_at || ""));
+  }
+
+  function measure(photo) {
+    const src = photoSrc(photo);
+    if (frame.aspects.has(src)) return Promise.resolve(frame.aspects.get(src));
+    return new Promise((resolve) => {
+      const image = new Image();
+      image.decoding = "async";
+      image.onload = () => {
+        const aspect = image.naturalWidth && image.naturalHeight ? image.naturalWidth / image.naturalHeight : 1.5;
+        frame.aspects.set(src, aspect);
+        resolve(aspect);
+      };
+      image.onerror = () => resolve(null);
+      image.src = src;
+    });
+  }
+
+  function shuffledOrder() {
+    const order = app.photos.map((_, index) => index);
+    for (let i = order.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+    return order;
+  }
+
+  function nextPhotos(count) {
+    if (frame.order.length !== app.photos.length) { frame.order = shuffledOrder(); frame.cursor = 0; }
+    const picked = [];
+    for (let i = 0; i < Math.min(count, frame.order.length); i += 1) {
+      picked.push(app.photos[frame.order[(frame.cursor + i) % frame.order.length]]);
+    }
+    return picked;
+  }
+
+  async function planScene() {
+    const screen = window.innerWidth / Math.max(1, window.innerHeight);
+    const candidates = nextPhotos(3);
+    const aspects = await Promise.all(candidates.map(measure));
+    const shape = (aspect) => aspect === null ? "broken" : aspect < 0.9 ? "portrait" : "landscape";
+    const shapes = aspects.map(shape);
+    const wide = screen > 1.2;
+    frame.sceneCount += 1;
+    let layout = "single";
+    let used = 1;
+    if (shapes[0] === "broken") {
+      layout = "skip";
+    } else if (wide && candidates.length >= 3 && shapes[0] === "portrait" && shapes[1] === "landscape" && shapes[2] === "landscape") {
+      layout = "trio";
+      used = 3;
+    } else if (wide && candidates.length >= 2 && shapes[0] === "portrait" && shapes[1] === "portrait") {
+      layout = "pair";
+      used = 2;
+    } else if (!wide && candidates.length >= 2 && shapes[0] === "landscape" && shapes[1] === "landscape") {
+      layout = "stack";
+      used = 2;
+    } else if (wide && candidates.length >= 3 && shapes.every((item) => item === "landscape") && frame.sceneCount % 3 === 0) {
+      // Every third scene of landscapes becomes a collage for variety.
+      layout = "trio";
+      used = 3;
+    }
+    const photos = candidates.slice(0, used);
+    const fill = layout === "single" && Math.abs(Math.log(aspects[0] / screen)) < 0.22;
+    return { layout, photos, fill, used };
+  }
+
+  function tileHtml(photo, { contain = false, drift = 0 } = {}) {
+    const src = escapeHtml(photoSrc(photo));
+    const alt = escapeHtml(photo.original_name || "Family photo");
+    const backdrop = contain ? `<img class="frame-backdrop" src="${src}" alt="" aria-hidden="true">` : "";
+    return `<figure class="frame-tile${contain ? " contain" : ""}">${backdrop}<img class="frame-photo drift-${drift}" src="${src}" alt="${alt}"></figure>`;
+  }
+
+  function sceneDuration() {
+    return Math.max(8, Number(app.state?.settings?.slideshow_seconds) || 12) * 1000;
+  }
+
+  async function showScene(direction = 1) {
     if (!albumDialog.open) return;
-    const photo = app.photos[app.photoIndex % app.photos.length];
-    document.getElementById("albumEmpty").hidden = Boolean(photo);
-    document.getElementById("albumDemoLabel").hidden = !photo?.demo;
-    albumImage.hidden = !photo;
-    if (!photo) { albumImage.removeAttribute("src"); return; }
-    albumImage.alt = photo.original_name || "Family photo";
-    albumImage.src = photo.url + (photo.demo ? "" : "?v=" + encodeURIComponent(photo.created_at || ""));
+    const token = ++frame.token;
+    window.clearTimeout(frame.timer);
+    const empty = !app.photos.length;
+    document.getElementById("albumEmpty").hidden = !empty;
+    if (empty) { frame.stage.innerHTML = ""; return; }
+    if (direction < 0 && frame.history.length > 1) {
+      frame.history.pop();
+      frame.cursor = frame.history.pop();
+    }
+    const startCursor = frame.cursor;
+    const scene = await planScene();
+    if (token !== frame.token || !albumDialog.open) return;
+    frame.cursor = (frame.cursor + scene.used) % Math.max(1, frame.order.length);
+    if (scene.layout === "skip") { showScene(1); return; }
+    frame.history.push(startCursor);
+    if (frame.history.length > 50) frame.history.shift();
+
+    const duration = sceneDuration();
+    const drift = frame.sceneCount % 4;
+    const tiles = scene.photos.map((photo, index) => tileHtml(photo, { contain: scene.layout === "single" && !scene.fill, drift: (drift + index) % 4 })).join("");
+    const layer = document.createElement("div");
+    layer.className = `frame-layer layout-${scene.layout}`;
+    layer.style.setProperty("--scene-ms", `${duration + 2000}ms`);
+    layer.innerHTML = tiles;
+    await Promise.all([...layer.querySelectorAll(".frame-photo")].map((image) => image.decode?.().catch(() => {})));
+    if (token !== frame.token || !albumDialog.open) return;
+    frame.stage.append(layer);
+    requestAnimationFrame(() => layer.classList.add("visible"));
+    const previous = [...frame.stage.children].filter((child) => child !== layer);
+    window.setTimeout(() => previous.forEach((child) => child.remove()), 1600);
+    document.getElementById("albumDemoLabel").hidden = !scene.photos.some((photo) => photo.demo);
+    frame.timer = window.setTimeout(() => showScene(1), duration);
   }
+
+  function nextEventText() {
+    const today = app.state?.today;
+    if (!today) return "";
+    const now = new Intl.DateTimeFormat("en-GB", { timeZone: app.state.timezone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date());
+    const todays = app.events.filter((event) => eventOverlapsDate(event, today));
+    const upcoming = todays.filter((event) => !event.all_day && event.start_date === today && (event.start_time || "") > now).sort((a, b) => a.start_time.localeCompare(b.start_time))[0];
+    if (upcoming) return `Next · ${upcoming.title} · ${formatTime(upcoming.start_time)}`;
+    const allDay = todays.find((event) => event.all_day);
+    return allDay ? `Today · ${allDay.title}` : "";
+  }
+
+  function updateFrameInfo() {
+    if (!albumDialog.open || !app.state) return;
+    const now = new Date();
+    document.getElementById("frameTime").textContent = new Intl.DateTimeFormat(undefined, { timeZone: app.state.timezone, hour: "numeric", minute: "2-digit" }).format(now);
+    document.getElementById("frameDate").textContent = new Intl.DateTimeFormat(undefined, { timeZone: app.state.timezone, weekday: "long", month: "long", day: "numeric" }).format(now);
+    const weather = document.getElementById("frameWeather");
+    if (weatherData?.current) {
+      const [icon, label] = conditions(weatherData.current.display_weather_code ?? weatherData.current.weather_code);
+      weather.textContent = `${icon} ${degrees(weatherData.current.temperature_2m)} · ${label}`;
+    }
+    weather.hidden = !weatherData?.current;
+    const next = document.getElementById("frameNext");
+    next.textContent = nextEventText();
+    next.hidden = !next.textContent;
+  }
+
+  function showFrameControls() {
+    albumDialog.classList.add("controls-visible");
+    window.clearTimeout(frame.hideTimer);
+    frame.hideTimer = window.setTimeout(() => albumDialog.classList.remove("controls-visible"), 4000);
+  }
+
   function openAlbum() {
-    if (!albumDialog.open) albumDialog.showModal();
-    renderAlbum();
+    if (albumDialog.open) return;
+    albumDialog.showModal();
+    frame.order = shuffledOrder();
+    frame.cursor = 0;
+    frame.history = [];
+    frame.stage.innerHTML = "";
+    updateFrameInfo();
+    showFrameControls();
+    showScene(1);
   }
+
   albumTrigger.addEventListener("click", openAlbum);
   albumTrigger.addEventListener("keydown", event => {
     if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openAlbum(); }
   });
-  for (const id of ["closeAlbum"]) {
-    document.getElementById(id).addEventListener("click", () => albumDialog.close());
+  document.getElementById("closeAlbum").addEventListener("click", (event) => { event.stopPropagation(); albumDialog.close(); });
+  document.getElementById("framePrevious").addEventListener("click", (event) => { event.stopPropagation(); showFrameControls(); showScene(-1); });
+  document.getElementById("frameNextButton").addEventListener("click", (event) => { event.stopPropagation(); showFrameControls(); showScene(1); });
+  albumDialog.addEventListener("click", (event) => {
+    // Tap the left or right edge to step through photos; tap elsewhere to show the buttons.
+    const x = event.clientX / window.innerWidth;
+    showFrameControls();
+    if (x < 0.2) showScene(-1);
+    else if (x > 0.8) showScene(1);
+  });
+  albumDialog.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowLeft") { showFrameControls(); showScene(-1); }
+    if (event.key === "ArrowRight") { showFrameControls(); showScene(1); }
+  });
+  albumDialog.addEventListener("close", () => {
+    frame.token += 1;
+    window.clearTimeout(frame.timer);
+    window.clearTimeout(frame.hideTimer);
+    frame.stage.innerHTML = "";
+    albumTrigger.focus();
+  });
+  window.setInterval(updateFrameInfo, 15_000);
+
+  function renderAlbum() {
+    // New or removed photos are picked up at the next scene; only an empty album needs an immediate redraw.
+    if (albumDialog.open && (!app.photos.length || !frame.stage.children.length)) showScene(1);
   }
-  albumDialog.addEventListener("close", () => albumTrigger.focus());
 
   function renderPhoto() {
     renderAlbum();
