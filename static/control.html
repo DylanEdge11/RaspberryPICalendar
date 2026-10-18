@@ -92,7 +92,10 @@
               <button class="secondary-button full-width" type="submit">Upload selected photos</button>
               <p class="save-message" id="uploadMessage" role="status"></p>
             </form>
-            <div class="photo-list" id="photoList"></div>
+            <details class="photos-picker photo-library" id="photoLibrary">
+              <summary><h3 id="photoLibraryTitle">Photos on the display</h3></summary>
+              <div class="photo-list" id="photoList"></div>
+            </details>
             <div class="photos-picker hidden" id="immichCard">
               <h3>Immich album</h3>
               <p class="muted-copy">Photos in your Immich album appear here automatically, and removing them from the album removes them here. No sign-in is needed.</p>

@@ -35,6 +35,8 @@
     photoInput: document.getElementById("photoInput"),
     uploadMessage: document.getElementById("uploadMessage"),
     photoList: document.getElementById("photoList"),
+    photoLibrary: document.getElementById("photoLibrary"),
+    photoLibraryTitle: document.getElementById("photoLibraryTitle"),
     googleAccountList: document.getElementById("googleAccountList"),
     googleConnectButton: document.getElementById("googleConnectButton"),
     googleSyncButton: document.getElementById("googleSyncButton")
@@ -241,6 +243,12 @@
   }
 
   function renderPhotos() {
+    dom.photoLibraryTitle.textContent = `Photos on the display (${app.photos.length})`;
+    // Folded by default so the page stays short; thumbnails are only built once it is opened.
+    if (!dom.photoLibrary.open) {
+      dom.photoList.innerHTML = "";
+      return;
+    }
     if (!app.photos.length) {
       dom.photoList.innerHTML = `<p class="muted-copy">No photos uploaded yet.</p>`;
       return;
@@ -250,6 +258,8 @@
     dom.photoList.innerHTML = app.photos.map((photo) => `<div class="photo-list-item"><img src="${escapeHtml(photo.thumb_url || photo.url)}" alt="${escapeHtml(photo.original_name)}" loading="lazy"><small>${escapeHtml(photo.original_name)}</small>${action(photo)}</div>`).join("");
     dom.photoList.querySelectorAll("[data-remove-photo]").forEach((button) => button.addEventListener("click", () => removePhoto(button.dataset.removePhoto)));
   }
+
+  dom.photoLibrary.addEventListener("toggle", renderPhotos);
 
   async function removePhoto(id) {
     const photo = app.photos.find((item) => item.id === id);
