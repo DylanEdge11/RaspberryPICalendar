@@ -10,6 +10,7 @@ The first release is intentionally small. It uses one Node.js service, the built
 - Responsive typography and layout designed around a 1080p monitor; the actual monitor should be measured before choosing a larger target.
 - Demo mode with clearly labelled local sample content and no account access.
 - The display follows the current date automatically: a new week or month appears at midnight with no input. Browsing to another week or month from the phone is temporary and returns to today after `AUTO_RETURN_TO_TODAY_MIN` minutes (default 30), or right away with **Today**.
+- Photo Mode: tap the Family Album card for a full-screen photo frame. Photos fill the screen instead of sitting in black bars: two portrait photos are paired side by side, some scenes become a three-photo collage, and photos that don't match the screen's shape sit on a blurred, enlarged copy of themselves. Scenes slowly zoom and crossfade, shuffled, at the phone's photo-timing setting (minimum 8 seconds). A corner shows the time, date, weather and the next event today. Tap the left or right edge (or the arrow buttons) to step through photos, and × to close. Quiet hours dim it too.
 - Phone controls at `/control`, including previous/next/today, week/month switching, week-start preference, slideshow timing, quiet hours, display title, upload, and removal.
 - Server-sent updates so a phone view change appears on the display without a manual reload. Browsers without `EventSource` fall back to polling.
 - SQLite-backed display settings and photo metadata.
