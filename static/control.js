@@ -23,6 +23,7 @@
     slideshowSeconds: document.getElementById("slideshowSeconds"),
     showPhotoCaptions: document.getElementById("showPhotoCaptions"),
     photoMotion: document.getElementById("photoMotion"),
+    photoMemories: document.getElementById("photoMemories"),
     photoModeMinutes: document.getElementById("photoModeMinutes"),
     displayTitleInput: document.getElementById("displayTitleInput"),
     overnightEnabled: document.getElementById("overnightEnabled"),
@@ -215,6 +216,7 @@
     dom.slideshowSeconds.value = settings.slideshow_seconds;
     dom.showPhotoCaptions.checked = Boolean(settings.show_photo_captions);
     dom.photoMotion.checked = settings.photo_motion !== false;
+    dom.photoMemories.checked = settings.photo_memories !== false;
     dom.photoModeMinutes.value = String(settings.photo_mode_minutes ?? 30);
     dom.displayTitleInput.value = settings.display_title;
     dom.overnightEnabled.checked = settings.overnight_enabled;
@@ -245,7 +247,7 @@
     }
     // Immich photos come back on the next sync if removed here, so they are managed in the Immich album instead.
     const action = (photo) => photo.demo ? "" : photo.id.startsWith("photo_immich_") ? `<span class="photo-source-badge" title="Remove it from the Immich album to take it off the display">Immich</span>` : `<button type="button" data-remove-photo="${escapeHtml(photo.id)}" aria-label="Remove ${escapeHtml(photo.original_name)}">×</button>`;
-    dom.photoList.innerHTML = app.photos.map((photo) => `<div class="photo-list-item"><img src="${escapeHtml(photo.url)}" alt="${escapeHtml(photo.original_name)}" loading="lazy"><small>${escapeHtml(photo.original_name)}</small>${action(photo)}</div>`).join("");
+    dom.photoList.innerHTML = app.photos.map((photo) => `<div class="photo-list-item"><img src="${escapeHtml(photo.thumb_url || photo.url)}" alt="${escapeHtml(photo.original_name)}" loading="lazy"><small>${escapeHtml(photo.original_name)}</small>${action(photo)}</div>`).join("");
     dom.photoList.querySelectorAll("[data-remove-photo]").forEach((button) => button.addEventListener("click", () => removePhoto(button.dataset.removePhoto)));
   }
 
@@ -416,6 +418,7 @@
         slideshow_seconds: Number(dom.slideshowSeconds.value),
         show_photo_captions: dom.showPhotoCaptions.checked,
         photo_motion: dom.photoMotion.checked,
+        photo_memories: dom.photoMemories.checked,
         photo_mode_minutes: Number(dom.photoModeMinutes.value),
         display_title: dom.displayTitleInput.value,
         overnight_enabled: dom.overnightEnabled.checked,

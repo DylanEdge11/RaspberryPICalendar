@@ -7,16 +7,18 @@ const ALBUM_ID = "11111111-2222-3333-4444-555555555555";
 function fixture({ albums = ["Family Calendar"], assets, albumResponse, stored = new Map(), status = 200 } = {}) {
   const calls = [];
   const removed = [];
+  const dated = [];
   const sync = createImmichSync({
     baseUrl: "http://immich.local:2283/",
     apiKey: "secret-key",
     albums,
     withSlot: async (task) => task(),
     listPhotoIds: () => [...stored.keys()],
-    savePhoto: async (data, name, id) => {
+    savePhoto: async (data, name, id, takenAt) => {
       if (name === "duplicate.jpg") throw Object.assign(new Error("That photo is already in the family display"), { status: 409 });
-      stored.set(id, { data, name });
+      stored.set(id, { data, name, takenAt });
     },
+    setTakenAt: (id, takenAt) => dated.push([id, takenAt]),
     removePhoto: async (id) => { removed.push(id); stored.delete(id); },
     fetchImpl: async (url, options = {}) => {
       calls.push({ url, method: options.method || "GET", body: options.body });
@@ -30,7 +32,7 @@ function fixture({ albums = ["Family Calendar"], assets, albumResponse, stored =
       throw new Error(`Unexpected ${url}`);
     }
   });
-  return { sync, calls, removed, stored };
+  return { sync, calls, removed, stored, dated };
 }
 
 test("imports album photos by name, skips videos and trash, and records the album", async () => {
@@ -88,4 +90,15 @@ test("nothing runs until Immich is configured", async () => {
   const sync = createImmichSync({ baseUrl: "", apiKey: "", albums: [] });
   assert.equal(sync.configured, false);
   assert.deepEqual(await sync.sync(), { skipped: true });
+});
+
+test("records when each photo was taken, including photos imported earlier", async () => {
+  const stored = new Map([[immichPhotoId("old"), {}]]);
+  const { sync, dated } = fixture({ albums: [ALBUM_ID], stored, assets: [
+    { id: "old", type: "IMAGE", localDateTime: "2018-10-17T09:00:00.000Z" },
+    { id: "new", type: "IMAGE", localDateTime: "2021-10-18T15:30:00.000Z" }
+  ] });
+  await sync.sync();
+  assert.equal(stored.get(immichPhotoId("new")).takenAt, "2021-10-18T15:30:00.000Z");
+  assert.deepEqual(dated, [[immichPhotoId("old"), "2018-10-17T09:00:00.000Z"]]);
 });

@@ -141,7 +141,7 @@ export function createPhotosPicker({ api, accessToken, savePhoto, hasPhoto, with
               const url = photoDownloadUrl(item.mediaFile?.baseUrl);
               const response = await fetchPhoto(url, { headers: { Authorization: `Bearer ${await accessToken()}` }, redirect: "error", signal: AbortSignal.timeout(60000) });
               const data = await readLimitedPhoto(response);
-              await savePhoto(data, item.mediaFile?.filename || "Google photo.jpg", id);
+              await savePhoto(data, item.mediaFile?.filename || "Google photo.jpg", id, item.createTime || null);
             });
             current.imported += 1;
           } catch (error) {

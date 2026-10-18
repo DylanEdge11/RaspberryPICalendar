@@ -8,6 +8,7 @@ import { createHash, createSign, randomBytes, timingSafeEqual } from "node:crypt
 import { DatabaseSync } from "node:sqlite";
 import { createPhotosPicker } from "./photos-picker.mjs";
 import { createImmichSync } from "./immich.mjs";
+import { exifTakenAt, normalizeTakenAt } from "./photo-meta.mjs";
 import { createUpdateControl } from "./phone-updates.mjs";
 
 import { createWeatherService } from "./weather.mjs";
@@ -27,6 +28,7 @@ const DATA_DIR = path.resolve(process.env.APP_DATA_DIR || path.join(ROOT_DIR, "d
 const DB_PATH = path.join(DATA_DIR, "calendar.sqlite");
 const PHOTO_ORIGINAL_DIR = path.join(DATA_DIR, "photos", "original");
 const PHOTO_DISPLAY_DIR = path.join(DATA_DIR, "photos", "display");
+const PHOTO_THUMB_DIR = path.join(DATA_DIR, "photos", "thumb");
 const SECRET_DIR = path.join(DATA_DIR, "secrets");
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 const MAX_DECODED_PIXELS = 40_000_000;
@@ -64,6 +66,7 @@ const DEFAULT_SETTINGS = {
   slideshow_seconds: "12",
   show_photo_captions: "false",
   photo_motion: "true",
+  photo_memories: "true",
   photo_mode_minutes: "30",
   overnight_enabled: "true",
   overnight_start: "22:30",
@@ -145,7 +148,7 @@ const picker = createPhotosPicker({
   },
   withSlot: withUploadSlot,
   hasPhoto: (id) => Boolean(db.prepare("SELECT id FROM photos WHERE id=?").get(id)),
-  savePhoto: (data, filename, id) => processPhotoPart({ data, filename }, id)
+  savePhoto: (data, filename, id, takenAt) => processPhotoPart({ data, filename }, id, takenAt)
 });
 const immich = createImmichSync({
   baseUrl: process.env.IMMICH_URL,
@@ -153,7 +156,8 @@ const immich = createImmichSync({
   albums: (process.env.IMMICH_ALBUMS || "").split(",").map((album) => album.trim()).filter(Boolean),
   withSlot: withUploadSlot,
   listPhotoIds: () => db.prepare("SELECT id FROM photos WHERE id LIKE 'photo_immich_%'").all().map((row) => row.id),
-  savePhoto: (data, filename, id) => processPhotoPart({ data, filename }, id),
+  savePhoto: (data, filename, id, takenAt) => processPhotoPart({ data, filename }, id, takenAt),
+  setTakenAt: (id, takenAt) => db.prepare("UPDATE photo_meta SET taken_at = ? WHERE photo_id = ? AND taken_at IS NULL").run(normalizeTakenAt(takenAt), id),
   removePhoto: (id) => removePhoto(id)
 });
 
@@ -172,8 +176,9 @@ function clampNumber(value, min, max) {
 async function initializeStorage() {
   await fsp.mkdir(PHOTO_ORIGINAL_DIR, { recursive: true });
   await fsp.mkdir(PHOTO_DISPLAY_DIR, { recursive: true });
+  await fsp.mkdir(PHOTO_THUMB_DIR, { recursive: true });
   await fsp.mkdir(SECRET_DIR, { recursive: true });
-  for (const directory of [DATA_DIR, PHOTO_ORIGINAL_DIR, PHOTO_DISPLAY_DIR, SECRET_DIR]) {
+  for (const directory of [DATA_DIR, PHOTO_ORIGINAL_DIR, PHOTO_DISPLAY_DIR, PHOTO_THUMB_DIR, SECRET_DIR]) {
     try { await fsp.chmod(directory, 0o700); } catch { /* Windows does not expose POSIX modes. */ }
   }
 }
@@ -241,6 +246,13 @@ function initializeDatabase() {
       status TEXT NOT NULL DEFAULT 'confirmed',
       updated_at TEXT NOT NULL,
       PRIMARY KEY(account_id, calendar_id, event_id)
+    );
+
+    -- Kept beside photos (not new columns) so an older release can still roll back onto this database.
+    CREATE TABLE IF NOT EXISTS photo_meta (
+      photo_id TEXT PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,
+      taken_at TEXT,
+      thumb_path TEXT
     );
 
     CREATE TABLE IF NOT EXISTS sync_status (
@@ -324,6 +336,7 @@ function readSettings() {
     slideshow_seconds: clampInteger(values.slideshow_seconds || 12, 5, 60),
     show_photo_captions: values.show_photo_captions === "true",
     photo_motion: values.photo_motion !== "false",
+    photo_memories: values.photo_memories !== "false",
     photo_mode_minutes: PHOTO_MODE_MINUTES.includes(Number(values.photo_mode_minutes)) ? Number(values.photo_mode_minutes) : 30,
     overnight_enabled: values.overnight_enabled !== "false",
     overnight_start: isTimeKey(values.overnight_start) ? values.overnight_start : "22:30",
@@ -378,6 +391,10 @@ function updateSettings(patch) {
   if (patch.photo_motion !== undefined) {
     if (typeof patch.photo_motion !== "boolean") throw httpError(400, "photo_motion must be true or false");
     next.photo_motion = patch.photo_motion;
+  }
+  if (patch.photo_memories !== undefined) {
+    if (typeof patch.photo_memories !== "boolean") throw httpError(400, "photo_memories must be true or false");
+    next.photo_memories = patch.photo_memories;
   }
   if (patch.photo_mode_minutes !== undefined) {
     if (!PHOTO_MODE_MINUTES.includes(patch.photo_mode_minutes)) throw httpError(400, `photo_mode_minutes must be one of ${PHOTO_MODE_MINUTES.join(", ")}`);
@@ -501,13 +518,15 @@ function getSyncStatus() {
 
 function getPhotoRows() {
   const rows = db.prepare(`
-    SELECT id, original_name, display_path, mime_type, width, height, bytes, created_at
-    FROM photos ORDER BY created_at DESC LIMIT ?
+    SELECT p.id, p.original_name, p.display_path, p.mime_type, p.width, p.height, p.bytes, p.created_at, m.taken_at, m.thumb_path
+    FROM photos p LEFT JOIN photo_meta m ON m.photo_id = p.id ORDER BY p.created_at DESC LIMIT ?
   `).all(MAX_PHOTOS);
   return rows.map((row) => ({
     id: row.id,
     original_name: row.original_name,
     url: `/media/display/${encodeURIComponent(row.id)}.jpg`,
+    thumb_url: `/media/${row.thumb_path ? "thumb" : "display"}/${encodeURIComponent(row.id)}.jpg`,
+    taken_at: row.taken_at || null,
     mime_type: row.mime_type,
     width: row.width,
     height: row.height,
@@ -744,7 +763,7 @@ async function processPhotoRequest(req) {
   return processPhotoPart(part);
 }
 
-async function processPhotoPart(part, photoId = null) {
+async function processPhotoPart(part, photoId = null, takenAt = null) {
   if (!sharp) throw httpError(503, "Photo processing is unavailable. Install the application dependencies first.");
   if (part.data.length > MAX_UPLOAD_BYTES) throw httpError(413, "Photo exceeds the 20 MB limit");
   const sniffedMime = sniffImage(part.data);
@@ -761,6 +780,8 @@ async function processPhotoPart(part, photoId = null) {
   const displayRelative = path.join("photos", "display", `${id}.jpg`);
   const originalPath = safeDataPath(originalRelative);
   const displayPath = safeDataPath(displayRelative);
+  const thumbRelative = path.join("photos", "thumb", `${id}.jpg`);
+  const thumbPath = safeDataPath(thumbRelative);
   const tempPath = `${displayPath}.tmp`;
 
   let metadata;
@@ -772,15 +793,18 @@ async function processPhotoPart(part, photoId = null) {
     }
     await image.rotate().resize({ width: 1920, height: 1080, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 86, progressive: true }).toFile(tempPath);
     await fsp.rename(tempPath, displayPath);
+    await writeThumbnail(displayPath, thumbPath);
     await fsp.writeFile(originalPath, part.data, { flag: "wx" });
     const createdAt = new Date().toISOString();
     db.prepare(`
       INSERT INTO photos(id, original_name, original_path, display_path, mime_type, sha256, width, height, bytes, created_at)
       VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, cleanFileName(part.filename), originalRelative, displayRelative, sniffedMime, sha256, metadata.width, metadata.height, part.data.length, createdAt);
+    db.prepare("INSERT INTO photo_meta(photo_id, taken_at, thumb_path) VALUES(?, ?, ?)").run(id, normalizeTakenAt(takenAt) || exifTakenAt(metadata.exif), thumbRelative);
   } catch (error) {
     await fsp.rm(tempPath, { force: true }).catch(() => {});
     await fsp.rm(displayPath, { force: true }).catch(() => {});
+    await fsp.rm(thumbPath, { force: true }).catch(() => {});
     await fsp.rm(originalPath, { force: true }).catch(() => {});
     if (error.status) throw error;
     if (String(error.message || "").toLowerCase().includes("heif") || sniffedMime === "image/heic") {
@@ -812,12 +836,56 @@ function safeDataPath(relativePath) {
   return resolved;
 }
 
+// A small square copy keeps the phone's photo list quick even with hundreds of photos.
+async function writeThumbnail(displayPath, thumbPath) {
+  const temp = `${thumbPath}.tmp`;
+  await sharp(displayPath).resize({ width: 320, height: 320, fit: "cover" }).jpeg({ quality: 78 }).toFile(temp);
+  await fsp.rename(temp, thumbPath);
+}
+
+// Fills in thumbnails and taken dates for photos added before this release, one at a time.
+async function backfillPhotoMeta() {
+  if (!sharp) return;
+  const rows = db.prepare(`
+    SELECT p.id, p.original_path, p.display_path, m.photo_id AS has_meta, m.thumb_path
+    FROM photos p LEFT JOIN photo_meta m ON m.photo_id = p.id
+    WHERE m.photo_id IS NULL OR m.thumb_path IS NULL
+  `).all();
+  let changed = 0;
+  for (const row of rows) {
+    if (phoneUpdates.busy()) return;
+    await withUploadSlot(async () => {
+      if (!db.prepare("SELECT id FROM photos WHERE id = ?").get(row.id)) return;
+      const thumbRelative = path.join("photos", "thumb", `${row.id}.jpg`);
+      try {
+        await writeThumbnail(safeDataPath(row.display_path), safeDataPath(thumbRelative));
+      } catch {
+        return;
+      }
+      let takenAt = null;
+      if (!row.has_meta) {
+        try { takenAt = exifTakenAt((await sharp(safeDataPath(row.original_path)).metadata()).exif); } catch { /* No readable date. */ }
+      }
+      db.prepare(`
+        INSERT INTO photo_meta(photo_id, taken_at, thumb_path) VALUES(?, ?, ?)
+        ON CONFLICT(photo_id) DO UPDATE SET thumb_path = excluded.thumb_path
+      `).run(row.id, takenAt, thumbRelative);
+      changed += 1;
+    });
+  }
+  if (changed) {
+    log("info", "Added thumbnails and photo dates", { photos: changed });
+    broadcastState();
+  }
+}
+
 async function removePhoto(id) {
   if (!/^photo_[a-z0-9_]+$/.test(id)) throw httpError(400, "Invalid photo id");
   const row = db.prepare("SELECT original_path, display_path FROM photos WHERE id = ?").get(id);
   if (!row) throw httpError(404, "Photo not found");
   await fsp.rm(safeDataPath(row.original_path), { force: true });
   await fsp.rm(safeDataPath(row.display_path), { force: true });
+  await fsp.rm(safeDataPath(path.join("photos", "thumb", `${id}.jpg`)), { force: true });
   db.prepare("DELETE FROM photos WHERE id = ?").run(id);
   broadcastState();
 }
@@ -1252,11 +1320,13 @@ async function serveStatic(res, relativePath) {
 }
 
 async function serveMedia(res, url) {
-  const match = /^\/media\/display\/(photo_[a-z0-9_]+)\.jpg$/i.exec(url.pathname);
+  const match = /^\/media\/(display|thumb)\/(photo_[a-z0-9_]+)\.jpg$/i.exec(url.pathname);
   if (!match) throw httpError(404, "Not found");
-  const row = db.prepare("SELECT display_path FROM photos WHERE id = ?").get(match[1]);
+  const row = db.prepare("SELECT p.display_path, m.thumb_path FROM photos p LEFT JOIN photo_meta m ON m.photo_id = p.id WHERE p.id = ?").get(match[2]);
   if (!row) throw httpError(404, "Not found");
-  const filePath = safeDataPath(row.display_path);
+  const relative = match[1].toLowerCase() === "thumb" ? row.thumb_path : row.display_path;
+  if (!relative) throw httpError(404, "Not found");
+  const filePath = safeDataPath(relative);
   const file = await fsp.readFile(filePath).catch(() => null);
   if (!file) throw httpError(404, "Not found");
   res.writeHead(200, { ...SECURITY_HEADERS, "Content-Type": "image/jpeg", "Cache-Control": "private, max-age=86400" });
@@ -1542,6 +1612,7 @@ if (shouldStartServer && APP_MODE === "production" && !adminPinIsConfigured()) {
   const syncTimer = setInterval(() => { syncCalendars().catch((error) => log("error", "Scheduled calendar sync failed", { message: error.message })); }, SYNC_INTERVAL_MIN * 60_000);
   syncTimer.unref();
   if (APP_MODE === "production") setTimeout(() => { syncCalendars().catch((error) => log("error", "Initial calendar sync failed", { message: error.message })); }, 1000).unref();
+  setTimeout(() => { backfillPhotoMeta().catch((error) => log("error", "Photo thumbnail backfill failed", { message: error.message })); }, 10_000).unref();
   if (immich.configured) {
     const runImmich = () => { if (!phoneUpdates.busy()) immich.sync().catch((error) => log("error", "Immich photo sync failed", { message: error.message })); };
     setInterval(runImmich, IMMICH_SYNC_INTERVAL_MIN * 60_000).unref();
