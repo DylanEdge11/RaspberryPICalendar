@@ -1313,7 +1313,7 @@ async function serveStatic(res, relativePath) {
   let file;
   try { file = await fsp.readFile(resolved); } catch { throw httpError(404, "Not found"); }
   const ext = path.extname(resolved).toLowerCase();
-  const contentType = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".ico": "image/x-icon" }[ext] || "application/octet-stream";
+  const contentType = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".png": "image/png", ".webmanifest": "application/manifest+json" }[ext] || "application/octet-stream";
   const cacheControl = [".html", ".js", ".css"].includes(ext) ? "no-cache" : "public, max-age=3600";
   res.writeHead(200, { ...SECURITY_HEADERS, "Content-Type": contentType, "Cache-Control": cacheControl });
   res.end(file);
